@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
 import '../styles/layout-preview.css';
 
@@ -159,13 +159,44 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
   const [loading, setLoading] = useState(true);
   const [scale, setScale] = useState(1.0);
   const [autoScale, setAutoScale] = useState(true); // Auto-fit to viewport
-  const [currentPage, setCurrentPage] = useState(0);
+  const [currentSpread, setCurrentSpread] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
   const [showSettings, setShowSettings] = useState(!hideSettingsProp); // Hide if prop is set
   const [viewMode, setViewMode] = useState<'spread' | 'single'>('spread');
   const [projectTitle, setProjectTitle] = useState(propTitle || 'Mein Buch');
   const [projectAuthor, setProjectAuthor] = useState(propAuthor || '');
   
   const contentRef = useRef<HTMLDivElement>(null);
+  const pagesContainerRef = useRef<HTMLDivElement>(null);
+
+  // Calculate total pages based on content
+  const calculateTotalPages = useCallback(() => {
+    if (!pagesContainerRef.current || !settings) return;
+    const container = pagesContainerRef.current;
+    const contentHeight = container.scrollHeight;
+    const pageHeight = (settings.pageHeight * PT_TO_PX) - 
+      ((settings.marginTop + settings.marginBottom) * PT_TO_PX);
+    const pages = Math.max(1, Math.ceil(contentHeight / pageHeight));
+    setTotalPages(pages);
+  }, [settings]);
+
+  // Recalculate pages when content or settings change
+  useEffect(() => {
+    const timer = setTimeout(calculateTotalPages, 100);
+    return () => clearTimeout(timer);
+  }, [chapters, settings, calculateTotalPages]);
+
+  // Navigation helpers
+  const totalSpreads = Math.ceil(totalPages / 2);
+  const currentLeftPage = currentSpread * 2 + 1;
+  const currentRightPage = Math.min(currentLeftPage + 1, totalPages);
+  
+  const prevSpread = () => setCurrentSpread(s => Math.max(0, s - 1));
+  const nextSpread = () => setCurrentSpread(s => Math.min(totalSpreads - 1, s + 1));
+  const goToPage = (page: number) => {
+    const spread = Math.floor((page - 1) / 2);
+    setCurrentSpread(Math.max(0, Math.min(totalSpreads - 1, spread)));
+  };
 
   // Reload settings when window gets focus (user may have changed them in sidebar)
   useEffect(() => {
@@ -692,6 +723,36 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
           </h1>
         </div>
         <div className="preview-controls">
+          {/* Page Navigation */}
+          <button 
+            onClick={prevSpread} 
+            disabled={currentSpread === 0}
+            title="Vorherige Seite"
+          >◀</button>
+          <span className="page-nav">
+            Seite{' '}
+            <input
+              type="number"
+              className="page-input"
+              value={currentLeftPage}
+              onChange={(e) => goToPage(Number(e.target.value))}
+              min={1}
+              max={totalPages}
+              style={{ width: '40px', textAlign: 'center' }}
+              title="Seitenzahl eingeben"
+            />
+            {viewMode === 'spread' && currentRightPage <= totalPages && (
+              <span>–{currentRightPage}</span>
+            )}
+            {' '}/ {totalPages}
+          </span>
+          <button 
+            onClick={nextSpread} 
+            disabled={currentSpread >= totalSpreads - 1}
+            title="Nächste Seite"
+          >▶</button>
+          <span className="divider" />
+          {/* Zoom controls */}
           <button 
             onClick={() => { setAutoScale(false); setScale(s => Math.max(0.3, s - 0.1)); }} 
             title="Verkleinern"

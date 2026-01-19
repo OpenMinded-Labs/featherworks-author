@@ -2070,16 +2070,16 @@ export const LayoutEditor: React.FC<LayoutEditorProps> = ({
           background: var(--bg-hover);
         }
         .btn-preview {
-          background: linear-gradient(135deg, var(--accent-color), #9f7aea);
+          background: var(--accent-color, #3b82f6);
           color: white;
           display: flex;
           align-items: center;
-          gap: 6px;
-          box-shadow: 0 2px 8px rgba(139, 92, 246, 0.3);
+          gap: 4px;
+          padding: 5px 10px;
+          font-size: 12px;
         }
         .btn-preview:hover {
-          transform: translateY(-1px);
-          box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
+          background: var(--accent-hover, #2563eb);
         }
         .btn-danger:hover {
           color: #e53e3e;

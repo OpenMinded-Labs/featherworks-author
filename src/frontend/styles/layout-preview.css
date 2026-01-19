@@ -86,11 +86,51 @@
   color: white;
 }
 
+.preview-controls button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 .preview-controls .divider {
   width: 1px;
   height: 20px;
   background: var(--border-color, #444);
   margin: 0 4px;
+}
+
+/* Page Navigation */
+.preview-controls .page-nav {
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.preview-controls .page-input {
+  width: 40px;
+  background: var(--bg-tertiary, #333);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 4px;
+  padding: 2px 4px;
+  color: inherit;
+  font-size: 12px;
+  text-align: center;
+}
+
+.preview-controls .page-input:focus {
+  border-color: var(--accent-color, #4a9eff);
+  outline: none;
+}
+
+/* Hide spinner arrows in number input */
+.preview-controls .page-input::-webkit-outer-spin-button,
+.preview-controls .page-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.preview-controls .page-input[type=number] {
+  -moz-appearance: textfield;
 }
 
 /* Main Body Area - CRITICAL: Takes all remaining space */
