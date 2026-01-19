@@ -567,16 +567,16 @@ export const LayoutEditor: React.FC<LayoutEditorProps> = ({
               </div>
             )}
           </div>
-          {dirty && <span className="unsaved-indicator">●</span>}
           <button
             className="btn btn-primary"
             onClick={handleSave}
             disabled={saving || !dirty}
           >
-            {saving ? 'Speichern...' : 'Speichern'}
+            {saving ? 'Speichern...' : '💾 Speichern'}
           </button>
-          <button className="btn btn-ghost" onClick={onClose}>✕</button>
+          {dirty && <span className="unsaved-indicator">●</span>}
         </div>
+        <button className="btn btn-ghost close-btn" onClick={onClose}>✕</button>
       </div>
 
       {/* Tabs */}
@@ -1663,11 +1663,19 @@ export const LayoutEditor: React.FC<LayoutEditorProps> = ({
         .layout-editor-header h2 {
           margin: 0;
           font-size: 18px;
+          flex-shrink: 0;
         }
         .header-actions {
           display: flex;
+          flex-direction: column;
           align-items: center;
-          gap: 12px;
+          gap: 8px;
+          flex: 1;
+          justify-content: center;
+        }
+        .close-btn {
+          flex-shrink: 0;
+          margin-left: auto;
         }
         .unsaved-indicator {
           color: var(--accent-color);

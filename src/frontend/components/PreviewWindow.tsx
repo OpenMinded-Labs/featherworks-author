@@ -713,9 +713,16 @@ export const PreviewWindow: React.FC<PreviewWindowProps> = ({ embedded = false, 
           border: none;
           border-radius: 6px;
           padding: 6px 12px;
-          color: inherit;
+          color: #f0f0f0;
           cursor: pointer;
           font-size: 14px;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          line-height: 1;
+          min-width: 32px;
+          text-align: center;
+        }
+        .preview-controls button:hover {
+          background: var(--bg-hover, #444);
         }
         .preview-controls button:disabled {
           opacity: 0.4;
