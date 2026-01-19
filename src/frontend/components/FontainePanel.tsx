@@ -4,6 +4,7 @@ import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/tauri';
 import { open } from '@tauri-apps/api/dialog';
 import { invalidateEntityCache } from '../entityHighlightService';
+import { AiSettingsPanel } from './AiSettingsPanel';
 
 // Types
 type AiMode = 'chat' | 'lektorat' | 'agent';
@@ -250,6 +251,7 @@ export const FontainePanel: React.FC<FontainePanelProps> = ({
   const [modelStatus, setModelStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [userName, setUserName] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showModelSettings, setShowModelSettings] = useState(false); // Modal für Model-Einstellungen
   const [activeProvider, setActiveProvider] = useState<ProviderType>('local');
   const [providerSettings, setProviderSettings] = useState<AiProviderSettings | null>(null);
   const aiEnabled = providerSettings?.enabled !== false;
@@ -1488,6 +1490,19 @@ export const FontainePanel: React.FC<FontainePanelProps> = ({
               </div>
               <small className="settings-hint">{t('fontaine.ragHint')}</small>
             </div>
+            
+            <div className="settings-divider" />
+            
+            {/* Model Settings Link */}
+            <button 
+              className="btn btn-sm btn-secondary settings-model-btn"
+              onClick={() => {
+                setShowSettings(false);
+                setShowModelSettings(true);
+              }}
+            >
+              🤖 {t('ai.settings.title', 'Modell-Einstellungen')}
+            </button>
           </div>
         )}
         
@@ -1877,6 +1892,16 @@ export const FontainePanel: React.FC<FontainePanelProps> = ({
           </button>
         </div>
       </div>
+      
+      {/* Model Settings Modal */}
+      {showModelSettings && (
+        <div className="modal-overlay" onClick={() => setShowModelSettings(false)}>
+          <div className="modal-container ai-settings-modal" onClick={e => e.stopPropagation()}>
+            <button className="modal-close" onClick={() => setShowModelSettings(false)}>×</button>
+            <AiSettingsPanel onClose={() => setShowModelSettings(false)} />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

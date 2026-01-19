@@ -124,9 +124,31 @@
 
 /* === Modals & Overlays === */
 .modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
   background: rgba(0,0,0,0.25);
   -webkit-backdrop-filter: blur(8px);
   backdrop-filter: blur(8px);
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-container {
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: var(--glass-blur-strong);
+  backdrop-filter: var(--glass-blur-strong);
+  border-radius: 24px;
+  box-shadow: var(--glass-shadow-lg);
+  border: 1.5px solid var(--glass-border);
+  padding: 24px;
+  max-width: 90vw;
+  max-height: 90vh;
+  overflow: auto;
 }
 
 .modal-content, .modal {
@@ -149,6 +171,35 @@
 .bug-report-subtext { color: var(--text-secondary); margin-top: 8px; }
 .bug-report-close-btn { margin-top: 24px; }
 
+/* AI Settings Modal (opened from Fontaine panel) */
+.ai-settings-modal {
+  max-width: 700px;
+  max-height: 80vh;
+  overflow-y: auto;
+  position: relative;
+}
+
+.ai-settings-modal .modal-close {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  background: var(--glass-bg-subtle);
+  border: 1px solid var(--glass-border-subtle);
+  border-radius: 8px;
+  width: 32px;
+  height: 32px;
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+  z-index: 10;
+}
+
+.ai-settings-modal .modal-close:hover {
+  background: var(--glass-bg);
+  color: var(--text-primary);
+}
+
 /* === Panels === */
 .panel, .settings-panel, .editor-settings-panel, .proofreading-panel, .analysis-panel {
   background: var(--glass-bg);
@@ -157,7 +208,6 @@
   border-radius: 16px;
   border: 1px solid var(--glass-border-subtle);
 }
-
 /* === Cards === */
 .card, .character-card, .scene-card, .recent-item {
   background: var(--glass-bg-subtle);
@@ -2611,6 +2661,16 @@ input:hover, textarea:hover, select:hover {
   font-size: 10px;
   color: var(--text-tertiary);
   margin-top: 6px;
+}
+
+/* Model Settings Button in Dropdown */
+.fontaine-settings-dropdown .settings-model-btn {
+  width: 100%;
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
 }
 
 /* Provider Options */
