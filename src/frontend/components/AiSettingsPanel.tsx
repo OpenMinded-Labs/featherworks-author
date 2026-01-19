@@ -45,6 +45,22 @@ interface DownloadProgress {
   eta_seconds: number;
 }
 
+// Model descriptions for tooltips
+const MODEL_DESCRIPTIONS: Record<string, { description: string; pros: string[]; cons: string[]; source: string }> = {
+  'phi-3-mini': {
+    description: 'Kompaktes, schnelles Modell von Microsoft. Ideal für Lektorat und kürzere Texte.',
+    pros: ['Schnell', 'Wenig RAM', 'Gute Deutsch-Unterstützung'],
+    cons: ['Kürzeres Kontextfenster', 'Weniger kreativ bei langen Texten'],
+    source: 'Microsoft / HuggingFace',
+  },
+  'mistral-7b': {
+    description: 'Leistungsstarkes Open-Source-Modell von Mistral AI. Besser für längere, kreative Texte.',
+    pros: ['Sehr gute Textqualität', 'Großes Kontextfenster', 'Kreatives Schreiben'],
+    cons: ['Mehr RAM benötigt', 'Längere Ladezeit'],
+    source: 'Mistral AI / HuggingFace',
+  },
+};
+
 interface AiSettingsPanelProps {
   onClose?: () => void;
 }
@@ -254,6 +270,18 @@ export const AiSettingsPanel: React.FC<AiSettingsPanelProps> = ({ onClose }) => 
         </div>
       )}
 
+      {/* Info Banner about external downloads */}
+      <div className="info-banner">
+        <span className="info-icon">ℹ️</span>
+        <div className="info-content">
+          <strong>Lokale KI-Modelle</strong>
+          <p>
+            Die Modelle werden von <a href="https://huggingface.co" target="_blank" rel="noopener">HuggingFace</a> heruntergeladen 
+            und lokal auf deinem Gerät ausgeführt. <strong>Deine Texte verlassen niemals deinen Computer.</strong>
+          </p>
+        </div>
+      </div>
+
       {/* Enable/Disable Toggle */}
       <section className="settings-section">
         <div className="toggle-row">
@@ -311,6 +339,7 @@ export const AiSettingsPanel: React.FC<AiSettingsPanelProps> = ({ onClose }) => 
             const isDownloading = downloadProgress?.model_id === model.id && 
                                   (downloadProgress.status === 'downloading' || downloadProgress.status === 'verifying');
             const canRun = hardware ? (model.ram_required_mb <= hardware.total_ram_gb * 1024) : true;
+            const modelDesc = MODEL_DESCRIPTIONS[model.id];
 
             return (
               <div 
@@ -319,12 +348,30 @@ export const AiSettingsPanel: React.FC<AiSettingsPanelProps> = ({ onClose }) => 
               >
                 <div className="model-header">
                   <span className="model-name">{model.name}</span>
+                  {/* Info tooltip */}
+                  {modelDesc && (
+                    <span className="model-info-trigger" title="Mehr erfahren">
+                      <span className="info-icon-small">❓</span>
+                      <div className="model-tooltip">
+                        <p className="tooltip-desc">{modelDesc.description}</p>
+                        <div className="tooltip-section">
+                          <strong>✅ Vorteile:</strong>
+                          <ul>{modelDesc.pros.map((p, i) => <li key={i}>{p}</li>)}</ul>
+                        </div>
+                        <div className="tooltip-section">
+                          <strong>⚠️ Nachteile:</strong>
+                          <ul>{modelDesc.cons.map((c, i) => <li key={i}>{c}</li>)}</ul>
+                        </div>
+                        <p className="tooltip-source">📦 Quelle: {modelDesc.source}</p>
+                      </div>
+                    </span>
+                  )}
                   {model.is_bundled && <span className="badge bundled">Inkludiert</span>}
-                  {!model.is_bundled && isAvailable && <span className="badge downloaded">Heruntergeladen</span>}
+                  {!model.is_bundled && isAvailable && <span className="badge downloaded">✓ Heruntergeladen</span>}
                 </div>
                 
                 <div className="model-details">
-                  <span>{formatBytes(model.size_bytes)}</span>
+                  <span>{model.size_display || formatBytes(model.size_bytes)}</span>
                   <span>•</span>
                   <span>{model.quantization}</span>
                   <span>•</span>

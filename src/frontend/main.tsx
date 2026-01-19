@@ -61,6 +61,7 @@ import { ProofreadingSettingsPanel } from './components/ProofreadingSettingsPane
 import { useWordCount } from './hooks/useWordCount';
 import { ShortcutsHelp } from './components/ShortcutsHelp';
 import { AiSettingsModal } from './components/AiSettingsModal';
+import { AiSettingsPanel } from './components/AiSettingsPanel';
 import { UpdateBanner, useUpdateCheck } from './components/UpdateBanner';
 import { LanguageToolSettings, type LanguageToolSettings as LTSettings } from './components/LanguageToolSettings';
 import { ToolRail, type ToolId } from './components/ToolRail';
@@ -1940,6 +1941,9 @@ function App() {
                             setIsDirty(true);
                           }}
                         />
+                    )}
+                    {activeTool === 'ai' && (
+                        <AiSettingsPanel />
                     )}
                     {activeTool === 'entities' && (
                         <EntitiesPanel 

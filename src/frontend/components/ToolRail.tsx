@@ -1,7 +1,7 @@
 import React from 'react';
 import { useTranslation } from 'react-i18next';
 
-export type ToolId = 'info' | 'editor' | 'entities' | 'plot' | 'research' | 'proofreading' | 'thesaurus' | 'fontaine' | 'stats' | 'shortcuts' | 'human' | 'layout';
+export type ToolId = 'info' | 'editor' | 'entities' | 'plot' | 'research' | 'proofreading' | 'thesaurus' | 'fontaine' | 'ai' | 'stats' | 'shortcuts' | 'human' | 'layout';
 
 interface ToolConfig {
   id: ToolId;
@@ -20,6 +20,7 @@ const TOOLS: ToolConfig[] = [
   { id: 'proofreading', icon: '🔍', labelKey: 'proofreading.title' },
   { id: 'thesaurus', icon: '📖', labelKey: 'tools.thesaurus' },
   { id: 'fontaine', icon: '/fontaine.png', labelKey: 'info.fontaine', isImage: true },
+  { id: 'ai', icon: '🤖', labelKey: 'ai.settings.title' },
   { id: 'stats', icon: '📊', labelKey: 'info.stats' },
   { id: 'shortcuts', icon: '⌨️', labelKey: 'info.shortcuts' },
   { id: 'human', icon: '🧑‍💻', labelKey: 'humanReview.title' },

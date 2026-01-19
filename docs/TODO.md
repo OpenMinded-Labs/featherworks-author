@@ -49,10 +49,15 @@ Dieses Dokument enthält die tatsächlich offenen Aufgaben und nächsten Schritt
 - [ ] Markdown Import/Export
 
 ### AI/Fontaine
-- [ ] RAG mit Embeddings (fastembed/onnx)
+- [x] RAG mit Embeddings (fastembed/onnx)
 - [ ] Bessere Prompt-Templates
-- [ ] Model-Download in-App
-- [ ] Mehr Provider (Mistral, Ollama)
+- [x] Model-Download in-App (Phi-3, Mistral von HuggingFace)
+- [x] Mehr Provider (Mistral, Ollama)
+- [ ] **KI-Funktionen ausblenden wenn keine AI geladen/aktiviert**
+  - Fontaine-Button in ToolRail ausgrauen oder verstecken
+  - Lektorat-Button im Editor deaktivieren  
+  - Entity-Extraction Button deaktivieren
+  - Hinweis zeigen: "KI-Modell herunterladen, um diese Funktion zu nutzen"
 
 ### Statistiken
 - [ ] Produktivitäts-Dashboard

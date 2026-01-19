@@ -5452,6 +5452,146 @@ input:hover, textarea:hover, select:hover {
   background: rgba(220,53,69,0.2);
 }
 
+/* Info Banner */
+.ai-settings-panel .info-banner {
+  display: flex;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  background: rgba(74,144,226,0.1);
+  border: 1px solid rgba(74,144,226,0.2);
+  border-radius: 10px;
+}
+
+.ai-settings-panel .info-banner .info-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.ai-settings-panel .info-banner .info-content {
+  flex: 1;
+}
+
+.ai-settings-panel .info-banner .info-content strong {
+  display: block;
+  font-size: 13px;
+  margin-bottom: 4px;
+  color: var(--text-primary);
+}
+
+.ai-settings-panel .info-banner .info-content p {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.5;
+}
+
+.ai-settings-panel .info-banner .info-content a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* Model Info Tooltip */
+.ai-settings-panel .model-info-trigger {
+  position: relative;
+  cursor: help;
+}
+
+.ai-settings-panel .info-icon-small {
+  font-size: 12px;
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.ai-settings-panel .model-info-trigger:hover .info-icon-small {
+  opacity: 1;
+}
+
+.ai-settings-panel .model-tooltip {
+  display: none;
+  position: absolute;
+  left: 100%;
+  top: -10px;
+  margin-left: 10px;
+  width: 260px;
+  padding: 14px;
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--glass-border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  z-index: 1000;
+}
+
+.ai-settings-panel .model-info-trigger:hover .model-tooltip {
+  display: block;
+}
+
+.ai-settings-panel .tooltip-desc {
+  font-size: 12px;
+  color: var(--text-primary);
+  margin: 0 0 10px 0;
+  line-height: 1.5;
+}
+
+.ai-settings-panel .tooltip-section {
+  margin-bottom: 8px;
+}
+
+.ai-settings-panel .tooltip-section strong {
+  font-size: 11px;
+  display: block;
+  margin-bottom: 4px;
+}
+
+.ai-settings-panel .tooltip-section ul {
+  margin: 0;
+  padding-left: 16px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.ai-settings-panel .tooltip-section ul li {
+  margin-bottom: 2px;
+}
+
+.ai-settings-panel .tooltip-source {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin: 8px 0 0 0;
+  padding-top: 8px;
+  border-top: 1px solid var(--glass-border-subtle);
+}
+
+/* Model Actions (select + delete) */
+.ai-settings-panel .model-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.ai-settings-panel .model-actions .select-btn {
+  flex: 1;
+}
+
+.ai-settings-panel .delete-btn {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(220,53,69,0.3);
+  background: transparent;
+  color: #dc3545;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.ai-settings-panel .delete-btn:hover:not(:disabled) {
+  background: rgba(220,53,69,0.15);
+}
+
+.ai-settings-panel .delete-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
 /* Advanced Settings */
 .ai-settings-panel .advanced summary {
   cursor: pointer;
