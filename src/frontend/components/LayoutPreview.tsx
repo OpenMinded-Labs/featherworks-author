@@ -167,22 +167,22 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
   const [projectAuthor, setProjectAuthor] = useState(propAuthor || '');
   
   const contentRef = useRef<HTMLDivElement>(null);
-  const pagesContainerRef = useRef<HTMLDivElement>(null);
+  const manuscriptFlowRef = useRef<HTMLDivElement>(null);
 
-  // Calculate total pages based on content
+  // Calculate total pages based on actual content height
   const calculateTotalPages = useCallback(() => {
-    if (!pagesContainerRef.current || !settings) return;
-    const container = pagesContainerRef.current;
-    const contentHeight = container.scrollHeight;
-    const pageHeight = (settings.pageHeight * PT_TO_PX) - 
-      ((settings.marginTop + settings.marginBottom) * PT_TO_PX);
-    const pages = Math.max(1, Math.ceil(contentHeight / pageHeight));
+    if (!manuscriptFlowRef.current || !settings) return;
+    const contentHeight = manuscriptFlowRef.current.scrollHeight;
+    // Calculate usable page height (page height minus margins)
+    const usablePageHeight = (settings.pageHeight - settings.marginTop - settings.marginBottom) * MM_TO_PX;
+    const pages = Math.max(1, Math.ceil(contentHeight / usablePageHeight));
+    console.log('[LayoutPreview] Calculated pages:', pages, 'contentHeight:', contentHeight, 'usablePageHeight:', usablePageHeight);
     setTotalPages(pages);
   }, [settings]);
 
   // Recalculate pages when content or settings change
   useEffect(() => {
-    const timer = setTimeout(calculateTotalPages, 100);
+    const timer = setTimeout(calculateTotalPages, 300);
     return () => clearTimeout(timer);
   }, [chapters, settings, calculateTotalPages]);
 
@@ -266,12 +266,8 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
     if (embedded && propAuthor) setProjectAuthor(propAuthor);
   }, [embedded, propTitle, propAuthor]);
 
-  // Load settings and content on mount (or use props in embedded mode)
-  useEffect(() => {
-    loadData();
-  }, [embedded, propChapters, propScenes]);
-
-  const loadData = async () => {
+  // Load settings and content on mount (or when props change in embedded mode)
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
       console.log('[LayoutPreview] Loading data... embedded:', embedded);
@@ -303,6 +299,7 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
         if (!propChapters || propChapters.length === 0) {
           console.warn('[LayoutPreview] No chapters provided in props!');
           setChapters([]);
+          setLoading(false);
           return;
         }
 
@@ -313,14 +310,16 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
           
           for (const sc of chapterScenes) {
             let content = (sc as any).content || '';
-            if (!content) {
+            console.log(`[LayoutPreview] Scene ${sc.id} initial content length: ${content.length}`);
+            if (!content || content.length === 0) {
               try {
                 console.log('[LayoutPreview] Loading content for scene:', sc.id);
-                const [loadedContent] = await invoke<[string, number]>('get_scene_content', { sceneId: sc.id });
-                content = loadedContent || '';
-                console.log('[LayoutPreview] Loaded content length:', content.length);
+                const result = await invoke<[string, number]>('get_scene_content', { sceneId: sc.id });
+                console.log('[LayoutPreview] get_scene_content result:', result);
+                content = result?.[0] || '';
+                console.log('[LayoutPreview] Loaded content length:', content.length, 'preview:', content.substring(0, 100));
               } catch (e) {
-                console.warn('[LayoutPreview] Could not load scene content:', sc.id, e);
+                console.error('[LayoutPreview] Could not load scene content:', sc.id, e);
               }
             }
             scenesWithContent.push({
@@ -380,7 +379,12 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
     } finally {
       setLoading(false);
     }
-  };
+  }, [embedded, propChapters, propScenes]);
+
+  // Call loadData on mount and when dependencies change
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   // Update a single setting
   const updateSetting = <K extends keyof LayoutSettings>(key: K, value: LayoutSettings[K]) => {
@@ -683,15 +687,20 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
       <header 
         className={`preview-header ${embedded ? 'embedded' : ''}`}
         style={{
-          flex: '0 0 50px',
-          height: '50px',
+          flex: '0 0 auto',
+          minHeight: '50px',
           display: 'flex',
+          flexWrap: 'wrap',
           justifyContent: 'space-between',
           alignItems: 'center',
-          padding: '0 20px',
+          padding: '8px 12px',
+          gap: '8px',
           background: embedded ? 'var(--bg-secondary, #222)' : '#222',
           borderBottom: '1px solid var(--border-color, #333)',
           boxSizing: 'border-box',
+          overflow: 'visible',
+          position: 'relative',
+          zIndex: 100,
         }}
       >
         <div className="preview-header-left">
@@ -728,7 +737,7 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
             onClick={prevSpread} 
             disabled={currentSpread === 0}
             title="Vorherige Seite"
-          >◀</button>
+          >{'<'}</button>
           <span className="page-nav">
             Seite{' '}
             <input
@@ -750,13 +759,13 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
             onClick={nextSpread} 
             disabled={currentSpread >= totalSpreads - 1}
             title="Nächste Seite"
-          >▶</button>
+          >{'>'}</button>
           <span className="divider" />
           {/* Zoom controls */}
           <button 
             onClick={() => { setAutoScale(false); setScale(s => Math.max(0.3, s - 0.1)); }} 
             title="Verkleinern"
-          >−</button>
+          >{'-'}</button>
           <span 
             onClick={() => setAutoScale(true)} 
             style={{ cursor: 'pointer' }}
@@ -767,7 +776,7 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
           <button 
             onClick={() => { setAutoScale(false); setScale(s => Math.min(2, s + 0.1)); }} 
             title="Vergrößern"
-          >+</button>
+          >{'+'}</button>
           <span className="divider" />
           <button 
             onClick={() => setViewMode(viewMode === 'spread' ? 'single' : 'spread')}
@@ -824,12 +833,10 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
       <div 
         className="preview-body"
         style={{
-          flex: '1 1 auto',
+          flex: '1 1 0',
           display: 'flex',
           overflow: 'hidden',
-          position: 'relative',
           minHeight: 0,
-          height: embedded ? '100%' : 'calc(100vh - 50px)',
         }}
       >
         {/* Settings Panel */}
@@ -1120,7 +1127,7 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
                     </div>
                     
                     {/* Content Rendering (Real Manuscript) - Galley Mode (Flows naturally) */}
-                    <div className="manuscript-content-flow">
+                    <div className="manuscript-content-flow" ref={manuscriptFlowRef}>
                         {loading ? (
                             <div className="empty-state">
                                 <p>Lade Kapitel...</p>

@@ -3665,6 +3665,38 @@ fn export_project_docx(
     layout::export_to_docx(&chapters, std::path::Path::new(&output_path), &project.title, &project.author)
 }
 
+/// Export current project to InDesign-optimized XML (loads data from DB)
+#[tauri::command]
+fn export_project_indesign_xml(
+    output_path: String,
+    state: State<AppState>
+) -> Result<(), String> {
+    let guard = state.db.lock().unwrap();
+    let conn = guard.as_ref().ok_or("No project open")?;
+    
+    // Load project metadata
+    let project = database::get_project(conn).map_err(|e| e.to_string())?;
+    let settings = layout::get_layout_settings(conn)?;
+    
+    // Load all chapters and scenes
+    let db_chapters = database::list_chapters(conn).map_err(|e| e.to_string())?;
+    let chapters: Vec<layout::ChapterContent> = db_chapters.iter().map(|ch| {
+        let scenes = database::list_scenes(conn, &ch.id).unwrap_or_default();
+        layout::ChapterContent {
+            title: ch.title.clone(),
+            scenes: scenes.into_iter().map(|s| {
+                let (content, _wc) = database::get_scene_content(conn, &s.id).unwrap_or_default();
+                layout::SceneContent {
+                    title: s.title,
+                    content,
+                }
+            }).collect(),
+        }
+    }).collect();
+    
+    layout::export_to_indesign_xml(&chapters, std::path::Path::new(&output_path), &project.title, &project.author, &settings)
+}
+
 #[tauri::command]
 fn export_manuscript_rtf(
     chapters: Vec<ExportChapter>,
@@ -4114,6 +4146,7 @@ pub fn run() {
             , export_project_pdf
             , export_project_epub
             , export_project_docx
+            , export_project_indesign_xml
             , render_preview_pdf
             , open_preview_window
             , open_pdf_preview_window

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
 import { useTranslation } from 'react-i18next';
 
@@ -200,6 +200,7 @@ export const LayoutEditor: React.FC<LayoutEditorProps> = ({
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [showPreviewDropdown, setShowPreviewDropdown] = useState(false);
+  const previewBtnRef = useRef<HTMLButtonElement>(null);
 
   const previewGeometry = useMemo(() => {
     if (!settings) return null;
@@ -464,109 +465,100 @@ export const LayoutEditor: React.FC<LayoutEditorProps> = ({
 
   return (
     <div className="layout-editor">
+      {/* Preview Selection Dialog */}
+      {showPreviewDropdown && (
+        <div 
+          className="preview-dialog-overlay"
+          onClick={() => setShowPreviewDropdown(false)}
+        >
+          <div 
+            className="preview-dialog glass-panel"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="preview-dialog-header">
+              <span className="preview-dialog-icon">👁️</span>
+              <h3>Vorschau wählen</h3>
+            </div>
+            <div className="preview-dialog-options">
+              <button
+                className="preview-option preview-option-primary"
+                onClick={async () => {
+                  setShowPreviewDropdown(false);
+                  try {
+                    if (dirty && settings && metadata) {
+                      await Promise.all([
+                        invoke('save_layout_settings', { settings }),
+                        invoke('save_book_metadata', { metadata }),
+                      ]);
+                      setDirty(false);
+                    }
+                    if (onOpenCssPreview) {
+                      onOpenCssPreview();
+                    } else {
+                      await invoke('open_preview_window');
+                    }
+                  } catch (e) {
+                    console.error('open_preview_window failed', e);
+                  }
+                }}
+              >
+                <span className="option-icon">⚡</span>
+                <div className="option-content">
+                  <span className="option-title">Live-Vorschau</span>
+                  <span className="option-desc">Schnell & interaktiv</span>
+                </div>
+              </button>
+              <button
+                className="preview-option"
+                onClick={async () => {
+                  setShowPreviewDropdown(false);
+                  try {
+                    if (dirty && settings && metadata) {
+                      await Promise.all([
+                        invoke('save_layout_settings', { settings }),
+                        invoke('save_book_metadata', { metadata }),
+                      ]);
+                      setDirty(false);
+                    }
+                    if (onOpenPdfPreview) {
+                      onOpenPdfPreview();
+                    } else {
+                      await invoke('open_pdf_preview_window');
+                    }
+                  } catch (e) {
+                    console.error('open_pdf_preview_window failed', e);
+                  }
+                }}
+              >
+                <span className="option-icon">📄</span>
+                <div className="option-content">
+                  <span className="option-title">PDF-Vorschau</span>
+                  <span className="option-desc">Exakte Druckansicht</span>
+                </div>
+              </button>
+            </div>
+            <button
+              className="preview-dialog-cancel"
+              onClick={() => setShowPreviewDropdown(false)}
+            >
+              Abbrechen
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="layout-editor-header">
         <h2>📐 Layout & Export</h2>
         <div className="header-actions">
-          <div className="preview-dropdown-container" style={{ position: 'relative' }}>
-            <button
-              className="btn btn-preview"
-              onClick={() => setShowPreviewDropdown(!showPreviewDropdown)}
-              title="Vorschau öffnen"
-            >
-              👁️ Vorschau
-              <span style={{ fontSize: '10px', marginLeft: '4px', opacity: 0.7 }}>▾</span>
-            </button>
-            {showPreviewDropdown && (
-              <div 
-                className="layout-preview-dropdown"
-                onMouseLeave={() => setShowPreviewDropdown(false)}
-                style={{
-                  position: 'absolute',
-                  top: '100%',
-                  left: 0,
-                  marginTop: '4px',
-                  background: 'var(--bg-secondary, #1e1e1e)',
-                  border: '1px solid var(--border-color, #333)',
-                  borderRadius: '8px',
-                  boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
-                  zIndex: 2147483647,
-                  minWidth: '180px',
-                  overflow: 'hidden',
-                }}
-              >
-                <button 
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    padding: '10px 14px',
-                    background: 'transparent',
-                    border: 'none',
-                    borderBottom: '1px solid var(--border-color, #333)',
-                    color: 'var(--text-primary, #f0f0f0)',
-                    fontSize: '13px',
-                    textAlign: 'left',
-                    cursor: 'pointer',
-                  }}
-                  onClick={async () => {
-                    setShowPreviewDropdown(false);
-                    try {
-                      if (dirty && settings && metadata) {
-                        await Promise.all([
-                          invoke('save_layout_settings', { settings }),
-                          invoke('save_book_metadata', { metadata }),
-                        ]);
-                        setDirty(false);
-                      }
-                      if (onOpenCssPreview) {
-                        onOpenCssPreview();
-                      } else {
-                        await invoke('open_preview_window');
-                      }
-                    } catch (e) {
-                      console.error('open_preview_window failed', e);
-                    }
-                  }}
-                >
-                  ⚡ Live-Vorschau (Schnell)
-                </button>
-                <button 
-                  style={{
-                    display: 'block',
-                    width: '100%',
-                    padding: '10px 14px',
-                    background: 'transparent',
-                    border: 'none',
-                    color: 'var(--text-primary, #f0f0f0)',
-                    fontSize: '13px',
-                    textAlign: 'left',
-                    cursor: 'pointer',
-                  }}
-                  onClick={async () => {
-                    setShowPreviewDropdown(false);
-                    try {
-                      if (dirty && settings && metadata) {
-                        await Promise.all([
-                          invoke('save_layout_settings', { settings }),
-                          invoke('save_book_metadata', { metadata }),
-                        ]);
-                        setDirty(false);
-                      }
-                      if (onOpenPdfPreview) {
-                        onOpenPdfPreview();
-                      } else {
-                        await invoke('open_pdf_preview_window');
-                      }
-                    } catch (e) {
-                      console.error('open_pdf_preview_window failed', e);
-                    }
-                  }}
-                >
-                  📄 PDF-Vorschau (Exakt)
-                </button>
-              </div>
-            )}
-          </div>
+          <button
+            ref={previewBtnRef}
+            className="btn btn-preview"
+            onClick={() => setShowPreviewDropdown(true)}
+            title="Vorschau öffnen"
+          >
+            👁️ Vorschau
+          </button>
           <button
             className="btn btn-primary"
             onClick={handleSave}
@@ -1657,25 +1649,39 @@ export const LayoutEditor: React.FC<LayoutEditorProps> = ({
           display: flex;
           justify-content: space-between;
           align-items: center;
-          padding: 16px 24px;
+          padding: 12px 16px;
           border-bottom: 1px solid var(--border-color);
+          flex-wrap: wrap;
+          gap: 8px;
         }
         .layout-editor-header h2 {
           margin: 0;
-          font-size: 18px;
+          font-size: 14px;
           flex-shrink: 0;
+          white-space: nowrap;
         }
         .header-actions {
           display: flex;
-          flex-direction: column;
+          flex-direction: row;
           align-items: center;
           gap: 8px;
           flex: 1;
           justify-content: center;
+          flex-wrap: wrap;
         }
         .close-btn {
           flex-shrink: 0;
-          margin-left: auto;
+        }
+        .preview-dropdown-container {
+          position: relative;
+        }
+        .layout-preview-dropdown {
+          position: absolute !important;
+          top: 100% !important;
+          left: 0 !important;
+          z-index: 2147483647 !important;
+          margin-top: 4px;
+          min-width: 180px;
         }
         .unsaved-indicator {
           color: var(--accent-color);

@@ -443,7 +443,7 @@ export const PreviewWindow: React.FC<PreviewWindowProps> = ({ embedded = false, 
           <h1>📄 PDF-Vorschau <span className="mode-hint">(Nach Aktualisierung)</span></h1>
         </div>
         <div className="preview-controls">
-          <button onClick={prevSpread} disabled={currentSpread === 0 || !pdf} title="Zurück">◀</button>
+          <button onClick={prevSpread} disabled={currentSpread === 0 || !pdf} title="Zurück">{'<'}</button>
           <span className="page-nav">
             Seite{' '}
             <input
@@ -464,11 +464,11 @@ export const PreviewWindow: React.FC<PreviewWindowProps> = ({ embedded = false, 
             />
             <span> / {totalPages || '–'}</span>
           </span>
-          <button onClick={nextSpread} disabled={!pdf || currentSpread >= Math.floor((totalPages - 1) / 2)} title="Weiter">▶</button>
+          <button onClick={nextSpread} disabled={!pdf || currentSpread >= Math.floor((totalPages - 1) / 2)} title="Weiter">{'>'}</button>
           <span className="divider" />
-          <button onClick={() => setScale((s) => Math.max(0.5, s - 0.15))} disabled={!pdf} title="Verkleinern">−</button>
+          <button onClick={() => setScale((s) => Math.max(0.5, s - 0.15))} disabled={!pdf} title="Verkleinern">{'-'}</button>
           <span>{Math.round(scale * 100)}%</span>
-          <button onClick={() => setScale((s) => Math.min(2, s + 0.15))} disabled={!pdf} title="Vergrößern">+</button>
+          <button onClick={() => setScale((s) => Math.min(2, s + 0.15))} disabled={!pdf} title="Vergrößern">{'+'}</button>
           {/* Export button */}
           {onExport && (
             <>
@@ -656,7 +656,7 @@ export const PreviewWindow: React.FC<PreviewWindowProps> = ({ embedded = false, 
               onClick={prevSpread}
               title="Vorherige Seite"
             >
-              ◀
+              {'<'}
             </button>
           )}
           
@@ -672,7 +672,7 @@ export const PreviewWindow: React.FC<PreviewWindowProps> = ({ embedded = false, 
               onClick={nextSpread}
               title="Nächste Seite"
             >
-              ▶
+              {'>'}
             </button>
           )}
         </div>
@@ -692,6 +692,11 @@ export const PreviewWindow: React.FC<PreviewWindowProps> = ({ embedded = false, 
           padding: 12px 20px;
           background: var(--bg-secondary, #222);
           border-bottom: 1px solid var(--border-color, #333);
+          flex-wrap: wrap;
+          gap: 8px;
+          min-height: 50px;
+          height: auto;
+          overflow: visible;
         }
         .preview-header h1 {
           margin: 0;
@@ -707,25 +712,31 @@ export const PreviewWindow: React.FC<PreviewWindowProps> = ({ embedded = false, 
           display: flex;
           align-items: center;
           gap: 8px;
+          flex-wrap: wrap;
         }
         .preview-controls button {
-          background: var(--bg-tertiary, #333);
-          border: none;
+          background: #444 !important;
+          border: 1px solid #555 !important;
           border-radius: 6px;
           padding: 6px 12px;
-          color: #f0f0f0;
+          color: #ffffff !important;
           cursor: pointer;
-          font-size: 14px;
+          font-size: 16px !important;
+          font-weight: bold !important;
           font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
           line-height: 1;
           min-width: 32px;
+          min-height: 28px;
           text-align: center;
+          display: inline-flex !important;
+          align-items: center;
+          justify-content: center;
         }
         .preview-controls button:hover {
-          background: var(--bg-hover, #444);
+          background: #555 !important;
         }
         .preview-controls button:disabled {
-          opacity: 0.4;
+          opacity: 0.4 !important;
           cursor: not-allowed;
         }
         .preview-controls button.active {
@@ -976,6 +987,17 @@ export const PreviewWindow: React.FC<PreviewWindowProps> = ({ embedded = false, 
         .preview-window.embedded {
           height: 100%;
           position: relative;
+        }
+        .preview-window.embedded .preview-header {
+          flex: 0 0 auto;
+          height: auto;
+          min-height: 50px;
+          max-height: none;
+          overflow: visible;
+        }
+        .preview-window.embedded .preview-body {
+          flex: 1 1 auto;
+          min-height: 0;
         }
       `}</style>
     </div>

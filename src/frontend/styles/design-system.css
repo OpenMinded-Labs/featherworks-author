@@ -6956,6 +6956,215 @@ input:hover, textarea:hover, select:hover {
   color: var(--text-primary);
 }
 
+/* Layout Editor Header */
+.layout-editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.layout-editor-header h2 {
+  margin: 0 !important;
+  font-size: 16px !important;
+}
+
+.layout-editor-header .header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.layout-editor .btn-preview {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  background: var(--accent-color, #3b82f6);
+  color: white !important;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.layout-editor .btn-preview:hover {
+  background: var(--accent-hover, #2563eb);
+}
+
+/* ============================================= */
+/* Preview Selection Dialog - Glassmorphism     */
+/* ============================================= */
+
+.preview-dialog-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 99999;
+  animation: fadeIn 0.15s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.preview-dialog.glass-panel {
+  background: var(--glass-bg-strong);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  border-radius: 16px;
+  padding: 24px;
+  min-width: 300px;
+  max-width: 360px;
+  box-shadow: var(--glass-shadow-lg);
+  animation: slideUp 0.2s ease-out;
+}
+
+@keyframes slideUp {
+  from { 
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to { 
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.preview-dialog-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.preview-dialog-icon {
+  font-size: 24px;
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--glass-bg-subtle);
+  border-radius: 12px;
+  border: 1px solid var(--glass-border-subtle);
+}
+
+.preview-dialog-header h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.preview-dialog-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.preview-option {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--glass-bg-subtle);
+  border: 1px solid var(--glass-border-subtle);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+}
+
+.preview-option:hover {
+  background: var(--glass-bg);
+  border-color: var(--glass-border);
+  transform: translateY(-1px);
+}
+
+.preview-option.preview-option-primary {
+  background: var(--accent-color, #3b82f6);
+  border-color: transparent;
+}
+
+.preview-option.preview-option-primary:hover {
+  background: var(--accent-hover, #2563eb);
+  border-color: transparent;
+}
+
+.preview-option .option-icon {
+  font-size: 22px;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 10px;
+}
+
+.preview-option:not(.preview-option-primary) .option-icon {
+  background: var(--glass-bg);
+}
+
+.preview-option .option-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.preview-option .option-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.preview-option.preview-option-primary .option-title {
+  color: white;
+}
+
+.preview-option .option-desc {
+  font-size: 12px;
+  color: var(--text-secondary);
+  opacity: 0.8;
+}
+
+.preview-option.preview-option-primary .option-desc {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.preview-dialog-cancel {
+  margin-top: 16px;
+  padding: 10px 16px;
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.preview-dialog-cancel:hover {
+  background: var(--glass-bg-subtle);
+  color: var(--text-primary);
+}
+
 /* Responsive preview section */
 .layout-editor .layout-preview-section {
   overflow: hidden;
@@ -7284,7 +7493,8 @@ input:hover, textarea:hover, select:hover {
   display: flex;
   flex-direction: column;
   background: var(--bg-secondary);
-  overflow: hidden;
+  overflow: visible;
+  min-height: 0;
 }
 
 .embedded-preview-container .layout-preview-window {
@@ -7332,4 +7542,41 @@ input:hover, textarea:hover, select:hover {
   left: auto !important;
   right: auto !important;
   bottom: auto !important;
+}
+
+/* Layout Editor Preview Dropdown - Portal rendered to body */
+.layout-preview-dropdown {
+  position: fixed !important;
+  z-index: 2147483647 !important;
+  background: #1e1e1e !important;
+  border: 1px solid #444 !important;
+  border-radius: 8px !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6) !important;
+  min-width: 200px !important;
+  overflow: visible !important;
+}
+
+.layout-preview-dropdown button {
+  display: block !important;
+  width: 100% !important;
+  padding: 12px 16px !important;
+  background: #2a2a2a !important;
+  border: none !important;
+  color: #ffffff !important;
+  font-size: 14px !important;
+  text-align: left !important;
+  cursor: pointer !important;
+}
+
+.layout-preview-dropdown button:first-child {
+  border-radius: 8px 8px 0 0;
+  border-bottom: 1px solid #444;
+}
+
+.layout-preview-dropdown button:last-child {
+  border-radius: 0 0 8px 8px;
+}
+
+.layout-preview-dropdown button:hover {
+  background: #3a3a3a !important;
 }

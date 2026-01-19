@@ -5,7 +5,8 @@
 
 /* Main Layout Container - FIXED FULLSCREEN */
 /* Only styled when actually rendered in the preview window */
-.layout-preview {
+.layout-preview,
+.preview-window {
   position: fixed !important;
   top: 0 !important;
   left: 0 !important;
@@ -26,36 +27,53 @@
   box-sizing: border-box !important;
 }
 
-/* Header Bar - FIXED HEIGHT */
-.layout-preview .preview-header {
-  flex: 0 0 50px !important;
-  height: 50px !important;
+/* Header Bar - FLEXIBLE HEIGHT for responsive layout */
+.layout-preview .preview-header,
+.preview-window .preview-header {
+  flex: 0 0 auto !important;
   min-height: 50px !important;
-  max-height: 50px !important;
+  height: auto !important;
   display: flex !important;
   justify-content: space-between !important;
   align-items: center !important;
-  padding: 0 20px !important;
-  background: #222 !important;
-  border-bottom: 1px solid #333 !important;
+  padding: 10px 16px !important;
+  background: var(--bg-secondary, #222) !important;
+  border-bottom: 1px solid var(--border-color, #333) !important;
   box-sizing: border-box !important;
-  margin: 0 !important;
+  margin: 0 0 8px 0 !important;
+  flex-wrap: wrap !important;
+  gap: 8px !important;
+  overflow: visible !important;
+  position: relative !important;
+  z-index: 10 !important;
+  border-radius: 8px;
+}
+
+/* Preview Body - fill remaining space */
+.layout-preview .preview-body,
+.preview-window .preview-body {
+  flex: 1 1 0 !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+  display: flex !important;
 }
 
 .preview-header-left {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .preview-header h1 {
   margin: 0;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
 .preview-header h1 span {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 400;
   color: var(--text-muted, #888);
 }
@@ -64,34 +82,62 @@
 .preview-controls {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
+  flex-wrap: wrap;
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+/* Make controls more compact on smaller screens */
+@media (max-width: 900px) {
+  .preview-controls {
+    gap: 2px;
+  }
+  .preview-controls button {
+    padding: 4px 6px !important;
+    min-width: 28px !important;
+    font-size: 14px !important;
+  }
+  .preview-controls .divider {
+    margin: 0 2px !important;
+  }
+  .preview-header h1 {
+    font-size: 12px !important;
+  }
 }
 
 .preview-controls button {
-  background: var(--bg-tertiary, #333);
-  border: none;
+  background: #444 !important;
+  border: 1px solid #555 !important;
   border-radius: 6px;
-  padding: 6px 12px;
-  color: #f0f0f0;
+  padding: 6px 10px;
+  color: #ffffff !important;
   cursor: pointer;
-  font-size: 14px;
+  font-size: 16px !important;
+  font-weight: bold !important;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  line-height: 1;
+  line-height: 1.2;
   min-width: 32px;
+  min-height: 28px;
   text-align: center;
+  opacity: 1 !important;
+  visibility: visible !important;
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
 }
 
 .preview-controls button:hover {
-  background: var(--bg-hover, #444);
+  background: #555 !important;
 }
 
 .preview-controls button.active {
-  background: var(--accent-color, #4a9eff);
-  color: white;
+  background: var(--accent-color, #4a9eff) !important;
+  color: white !important;
 }
 
 .preview-controls button:disabled {
-  opacity: 0.4;
+  opacity: 0.4 !important;
   cursor: not-allowed;
 }
 
@@ -391,25 +437,35 @@
   width: 100% !important;
   height: 100% !important;
   z-index: auto !important;
+  display: flex !important;
+  flex-direction: column !important;
 }
 
-.layout-preview.embedded .preview-header {
-  flex: 0 0 50px !important;
-  height: 50px !important;
+.layout-preview.embedded .preview-header,
+.preview-window.embedded .preview-header {
+  flex: 0 0 auto !important;
+  height: auto !important;
   min-height: 50px !important;
-  max-height: 50px !important;
+  max-height: none !important;
+  overflow: visible !important;
 }
 
-.layout-preview.embedded .preview-body {
-  height: calc(100% - 50px) !important;
-  max-height: calc(100% - 50px) !important;
+.layout-preview.embedded .preview-body,
+.preview-window.embedded .preview-body {
+  flex: 1 1 auto !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  overflow: auto !important;
 }
 
-.layout-preview.embedded .preview-settings {
+.layout-preview.embedded .preview-settings,
+.preview-window.embedded .preview-settings {
   height: 100% !important;
 }
 
-.layout-preview.embedded .preview-content {
+.layout-preview.embedded .preview-content,
+.preview-window.embedded .preview-content {
   height: 100% !important;
 }
 
@@ -418,4 +474,9 @@
   position: relative !important;
   width: 100% !important;
   height: 100% !important;
+  top: auto !important;
+  left: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  z-index: auto !important;
 }

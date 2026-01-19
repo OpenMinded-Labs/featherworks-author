@@ -1,5 +1,6 @@
 import { confirm } from '@tauri-apps/api/dialog';
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 // Early runtime diagnostic
 console.log('[FW] main.tsx loaded');
@@ -416,7 +417,25 @@ function App() {
     // Main content view mode: editor (write) or preview (view layout)
     const [mainViewMode, setMainViewMode] = useState<'editor' | 'preview-css' | 'preview-pdf'>('editor');
     const [showPreviewDropdown, setShowPreviewDropdown] = useState(false);
+    const [previewDropdownPos, setPreviewDropdownPos] = useState<{top: number; left: number} | null>(null);
+    const previewBtnRef = useRef<HTMLButtonElement>(null);
+    const previewDropdownRef = useRef<HTMLDivElement>(null);
     const [showExportFormatDialog, setShowExportFormatDialog] = useState(false);
+
+    // Click outside handler for preview dropdown
+    useEffect(() => {
+        if (!showPreviewDropdown) return;
+        const handleClickOutside = (e: MouseEvent) => {
+            if (
+                previewDropdownRef.current && !previewDropdownRef.current.contains(e.target as Node) &&
+                previewBtnRef.current && !previewBtnRef.current.contains(e.target as Node)
+            ) {
+                setShowPreviewDropdown(false);
+            }
+        };
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [showPreviewDropdown]);
 
     // Provide a sensible default export path when the modal opens
     useEffect(() => {
@@ -1557,13 +1576,18 @@ function App() {
                     </button>
                     <div className="preview-dropdown-container">
                         <button 
+                            ref={previewBtnRef}
                             className={`toolbar-btn ${mainViewMode !== 'editor' ? 'active' : ''}`}
                             onClick={() => {
                                 if (mainViewMode === 'editor') {
                                     // If in editor, go to last preview mode or default to CSS
                                     setMainViewMode('preview-css');
                                 } else {
-                                    // If already in preview, toggle dropdown
+                                    // If already in preview, toggle dropdown and calculate position
+                                    if (!showPreviewDropdown && previewBtnRef.current) {
+                                        const rect = previewBtnRef.current.getBoundingClientRect();
+                                        setPreviewDropdownPos({ top: rect.bottom + 4, left: rect.left });
+                                    }
                                     setShowPreviewDropdown(!showPreviewDropdown);
                                 }
                             }}
@@ -1572,21 +1596,60 @@ function App() {
                             👁️
                             <span className="dropdown-arrow">▾</span>
                         </button>
-                        {showPreviewDropdown && (
-                            <div className="preview-dropdown" onMouseLeave={() => setShowPreviewDropdown(false)}>
+                        {showPreviewDropdown && previewDropdownPos && createPortal(
+                            <div 
+                                ref={previewDropdownRef}
+                                className="preview-dropdown"
+                                style={{
+                                    position: 'fixed',
+                                    top: previewDropdownPos.top,
+                                    left: previewDropdownPos.left,
+                                    background: 'var(--bg-secondary, #1e1e1e)',
+                                    border: '1px solid var(--border-color, #333)',
+                                    borderRadius: '8px',
+                                    boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
+                                    zIndex: 2147483647,
+                                    minWidth: '180px',
+                                    overflow: 'hidden',
+                                }}
+                            >
                                 <button 
                                     className={mainViewMode === 'preview-css' ? 'active' : ''}
                                     onClick={() => { setMainViewMode('preview-css'); setShowPreviewDropdown(false); }}
+                                    style={{
+                                        display: 'block',
+                                        width: '100%',
+                                        padding: '10px 14px',
+                                        background: mainViewMode === 'preview-css' ? 'var(--accent-color, #3b82f6)' : 'transparent',
+                                        border: 'none',
+                                        borderBottom: '1px solid var(--border-color, #333)',
+                                        color: mainViewMode === 'preview-css' ? 'white' : 'var(--text-primary, #f0f0f0)',
+                                        fontSize: '13px',
+                                        textAlign: 'left',
+                                        cursor: 'pointer',
+                                    }}
                                 >
                                     📐 Layout-Vorschau (Live)
                                 </button>
                                 <button 
                                     className={mainViewMode === 'preview-pdf' ? 'active' : ''}
                                     onClick={() => { setMainViewMode('preview-pdf'); setShowPreviewDropdown(false); }}
+                                    style={{
+                                        display: 'block',
+                                        width: '100%',
+                                        padding: '10px 14px',
+                                        background: mainViewMode === 'preview-pdf' ? 'var(--accent-color, #3b82f6)' : 'transparent',
+                                        border: 'none',
+                                        color: mainViewMode === 'preview-pdf' ? 'white' : 'var(--text-primary, #f0f0f0)',
+                                        fontSize: '13px',
+                                        textAlign: 'left',
+                                        cursor: 'pointer',
+                                    }}
                                 >
                                     📄 PDF-Vorschau (Exakt)
                                 </button>
-                            </div>
+                            </div>,
+                            document.body
                         )}
                     </div>
                 </div>

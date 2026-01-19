@@ -10,7 +10,7 @@ interface ExportFormatDialogProps {
   projectAuthor?: string;
 }
 
-type ExportFormat = 'pdf' | 'epub' | 'docx' | 'mobi';
+type ExportFormat = 'pdf' | 'epub' | 'docx' | 'mobi' | 'indesign-xml';
 
 interface FormatInfo {
   id: ExportFormat;
@@ -46,6 +46,14 @@ const FORMATS: FormatInfo[] = [
     icon: '📝',
     description: 'Microsoft Word-kompatibles Format',
     extension: 'docx',
+    available: true,
+  },
+  {
+    id: 'indesign-xml',
+    name: 'InDesign XML',
+    icon: '🎨',
+    description: 'XML-Format optimiert für Adobe InDesign Import',
+    extension: 'xml',
     available: true,
   },
   {
@@ -131,6 +139,11 @@ export const ExportFormatDialog: React.FC<ExportFormatDialogProps> = ({
           break;
         case 'docx':
           await invoke('export_project_docx', {
+            outputPath: filePath,
+          });
+          break;
+        case 'indesign-xml':
+          await invoke('export_project_indesign_xml', {
             outputPath: filePath,
           });
           break;

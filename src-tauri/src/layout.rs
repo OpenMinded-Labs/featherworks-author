@@ -1271,6 +1271,305 @@ fn rtf_escape(s: &str) -> String {
     result
 }
 
+/// Export to InDesign-optimized XML (IDML-compatible structure)
+/// 
+/// This generates an XML file that can be easily imported into Adobe InDesign
+/// with proper paragraph styles, character styles, and structure for book layout.
+/// The format uses InDesign Tagged Text XML conventions.
+pub fn export_to_indesign_xml(
+    chapters: &[ChapterContent],
+    output_path: &Path,
+    title: &str,
+    author: &str,
+    settings: &LayoutSettings,
+) -> Result<(), String> {
+    use std::io::Write;
+    use regex::Regex;
+    
+    let mut xml = String::from(r#"<?xml version="1.0" encoding="UTF-8"?>
+<!-- InDesign-optimized XML Export from FeatherWorks Author -->
+<!-- Import into InDesign: File > Import XML... then map tags to paragraph styles -->
+<!-- 
+  Paragraph Styles needed:
+  - BookTitle, BookAuthor (Title page)
+  - ChapterTitle (Chapter headings)
+  - BodyTextFirst (First paragraph, no indent)
+  - BodyText (Regular paragraphs with indent)
+  - Dialogue (Dialogue paragraphs)
+  - DialogueFirst (First dialogue after narrative)
+  - SceneBreak (Scene separators like *** or ---)
+  
+  Character Styles needed:
+  - Emphasis (for *italic* text)
+  - Strong (for **bold** text)
+  - EmphasisStrong (for ***bold italic*** text)
+-->
+<document xmlns:aid="http://ns.adobe.com/AdobeInDesign/4.0/"
+          xmlns:aid5="http://ns.adobe.com/AdobeInDesign/5.0/">
+"#);
+
+    // Document metadata
+    xml.push_str(&format!(r#"
+  <metadata>
+    <title>{}</title>
+    <author>{}</author>
+    <generator>FeatherWorks Author</generator>
+    <created>{}</created>
+    <pageWidth>{}</pageWidth>
+    <pageHeight>{}</pageHeight>
+    <marginTop>{}</marginTop>
+    <marginBottom>{}</marginBottom>
+    <marginInner>{}</marginInner>
+    <marginOuter>{}</marginOuter>
+    <fontFamily>{}</fontFamily>
+    <fontSize>{}</fontSize>
+    <lineHeight>{}</lineHeight>
+  </metadata>
+
+  <content>
+"#, 
+        xml_escape(title),
+        xml_escape(author),
+        chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ"),
+        settings.page_width,
+        settings.page_height,
+        settings.margin_top,
+        settings.margin_bottom,
+        settings.margin_inner,
+        settings.margin_outer,
+        xml_escape(&settings.font_family),
+        settings.font_size,
+        settings.line_height,
+    ));
+
+    // Title page (as separate section)
+    xml.push_str(&format!(r#"
+    <section aid:pstyle="FrontMatter">
+      <title-page>
+        <book-title aid:pstyle="BookTitle">{}</book-title>
+        <book-author aid:pstyle="BookAuthor">{}</book-author>
+      </title-page>
+    </section>
+"#, xml_escape(title), xml_escape(author)));
+
+    // Regex for scene breaks in text
+    let scene_break_re = Regex::new(r"^[\s]*[-–—*#~=]{3,}[\s]*$").unwrap();
+    
+    // Regex for inline formatting (Markdown-style)
+    let bold_italic_re = Regex::new(r"\*\*\*(.+?)\*\*\*").unwrap();
+    let bold_re = Regex::new(r"\*\*(.+?)\*\*").unwrap();
+    let italic_re = Regex::new(r"\*(.+?)\*").unwrap();
+    let underscore_italic_re = Regex::new(r"_(.+?)_").unwrap();
+
+    // Chapters
+    for (chapter_idx, chapter) in chapters.iter().enumerate() {
+        xml.push_str(&format!(r#"
+    <chapter number="{}">
+      <chapter-title aid:pstyle="ChapterTitle">{}</chapter-title>
+"#, chapter_idx + 1, xml_escape(&chapter.title)));
+
+        // Scenes within chapter
+        for (scene_idx, scene) in chapter.scenes.iter().enumerate() {
+            // Add scene break between scenes (except before first)
+            if scene_idx > 0 {
+                xml.push_str(r#"
+      <scene-break aid:pstyle="SceneBreak">⁂</scene-break>
+"#);
+            }
+
+            xml.push_str(&format!(r#"
+      <scene number="{}">
+"#, scene_idx + 1));
+
+            // Smart paragraph detection:
+            // 1. First try splitting by double newlines (\n\n)
+            // 2. If that results in only 1 paragraph, split by single newlines
+            // 3. Handle scene breaks (-----, ***, etc.) inline
+            
+            let raw_paragraphs: Vec<&str> = scene.content.split("\n\n").collect();
+            
+            let paragraphs: Vec<String> = if raw_paragraphs.len() <= 1 {
+                // No double newlines found - split by single newlines instead
+                scene.content
+                    .split('\n')
+                    .map(|p| p.trim().to_string())
+                    .filter(|p| !p.is_empty())
+                    .collect()
+            } else {
+                // Double newlines found - use those as paragraph separators
+                raw_paragraphs
+                    .iter()
+                    .map(|p| p.trim().to_string())
+                    .filter(|p| !p.is_empty())
+                    .collect()
+            };
+
+            let mut prev_was_dialogue = false;
+            let mut is_first_para = true;
+
+            for para in paragraphs.iter() {
+                // Check if this is a scene break marker in the text
+                if scene_break_re.is_match(para) {
+                    xml.push_str(r#"        <scene-break aid:pstyle="SceneBreak">⁂</scene-break>
+"#);
+                    is_first_para = true; // Next paragraph should be BodyTextFirst
+                    prev_was_dialogue = false;
+                    continue;
+                }
+
+                // Check if paragraph is dialogue
+                let is_dialogue = is_dialogue_paragraph(para);
+                
+                // Determine paragraph style
+                let para_style = if is_dialogue {
+                    if !prev_was_dialogue {
+                        "DialogueFirst" // First dialogue after narrative (no indent)
+                    } else {
+                        "Dialogue"
+                    }
+                } else if is_first_para {
+                    "BodyTextFirst"
+                } else {
+                    "BodyText"
+                };
+                
+                // Process inline formatting
+                let formatted_content = process_inline_formatting(
+                    &xml_escape(para),
+                    &bold_italic_re,
+                    &bold_re,
+                    &italic_re,
+                    &underscore_italic_re,
+                );
+                
+                xml.push_str(&format!(
+                    r#"        <para aid:pstyle="{}">{}</para>
+"#, 
+                    para_style,
+                    formatted_content
+                ));
+                
+                prev_was_dialogue = is_dialogue;
+                is_first_para = false;
+            }
+
+            xml.push_str(r#"      </scene>
+"#);
+        }
+
+        xml.push_str(r#"    </chapter>
+"#);
+    }
+
+    // Close document
+    xml.push_str(r#"
+  </content>
+
+  <!-- 
+  InDesign Import Guide:
+  ======================
+  1. Create a new InDesign document with your preferred page size
+  2. Create Paragraph Styles matching these names:
+     - BookTitle: Large centered title font
+     - BookAuthor: Subtitle style for author name
+     - ChapterTitle: Chapter heading style (page break before)
+     - BodyTextFirst: Body text without first-line indent
+     - BodyText: Regular body text with first-line indent
+     - Dialogue: Style for dialogue (with indent)
+     - DialogueFirst: First dialogue after narrative (no indent)
+     - SceneBreak: Centered scene separator
+  
+  Character Styles:
+     - Emphasis: Italic text (*text* or _text_)
+     - Strong: Bold text (**text**)
+     - EmphasisStrong: Bold italic (***text***)
+  
+  3. File > Import XML...
+  4. Check "Merge Content" if updating
+  5. Map XML Tags to Paragraph Styles:
+     - Select each tag and assign the corresponding style
+  6. Place the content using the Structure panel
+  -->
+
+"#);
+
+    // Style hints with actual values from layout settings
+    let font_size = settings.font_size;
+    let line_height_pt = settings.font_size * settings.line_height;
+    let indent = settings.first_line_indent;
+    
+    xml.push_str(&format!(r#"  <!-- Style suggestions (pt values based on layout settings) -->
+  <style-hints>
+    <!-- Paragraph Styles -->
+    <style name="BookTitle" font-size="24pt" alignment="center" space-after="12pt"/>
+    <style name="BookAuthor" font-size="14pt" alignment="center" space-after="48pt"/>
+    <style name="ChapterTitle" font-size="18pt" alignment="center" space-before="72pt" space-after="24pt" page-break="before"/>
+    <style name="BodyTextFirst" font-size="{font_size}pt" line-height="{line_height_pt}pt" first-indent="0pt" alignment="justify"/>
+    <style name="BodyText" font-size="{font_size}pt" line-height="{line_height_pt}pt" first-indent="{indent}mm" alignment="justify"/>
+    <style name="DialogueFirst" font-size="{font_size}pt" line-height="{line_height_pt}pt" first-indent="0pt" alignment="justify"/>
+    <style name="Dialogue" font-size="{font_size}pt" line-height="{line_height_pt}pt" first-indent="{indent}mm" alignment="justify"/>
+    <style name="SceneBreak" font-size="{font_size}pt" alignment="center" space-before="12pt" space-after="12pt"/>
+    <!-- Character Styles -->
+    <cstyle name="Emphasis" font-style="italic"/>
+    <cstyle name="Strong" font-weight="bold"/>
+    <cstyle name="EmphasisStrong" font-style="italic" font-weight="bold"/>
+  </style-hints>
+
+</document>
+"#));
+
+    // Write to file
+    let mut file = std::fs::File::create(output_path).map_err(|e| e.to_string())?;
+    file.write_all(xml.as_bytes()).map_err(|e| e.to_string())?;
+    
+    log::info!("InDesign XML exported to: {:?}", output_path);
+    Ok(())
+}
+
+/// Check if a paragraph is dialogue based on its content
+fn is_dialogue_paragraph(para: &str) -> bool {
+    let trimmed = para.trim();
+    
+    // Starts with quotation marks (various styles)
+    trimmed.starts_with('"')           // English double quote
+        || trimmed.starts_with('"')    // Smart opening quote
+        || trimmed.starts_with('„')    // German opening quote
+        || trimmed.starts_with('»')    // French/German guillemet
+        || trimmed.starts_with('«')    // French guillemet
+        || trimmed.starts_with("—")    // Em-dash for dialogue
+        || trimmed.starts_with("–")    // En-dash
+        || trimmed.starts_with("\"")   // Escaped quote
+        // Also check if it's a dialogue continuation (contains mainly quoted text)
+        || (trimmed.contains('"') && trimmed.contains('"') && 
+            trimmed.find('"').unwrap_or(usize::MAX) < 10)
+}
+
+/// Process inline formatting (Markdown-style) and convert to InDesign character styles
+fn process_inline_formatting(
+    text: &str,
+    bold_italic_re: &regex::Regex,
+    bold_re: &regex::Regex,
+    italic_re: &regex::Regex,
+    underscore_italic_re: &regex::Regex,
+) -> String {
+    let mut result = text.to_string();
+    
+    // Order matters: process bold+italic first, then bold, then italic
+    // ***bold italic*** -> <span aid:cstyle="EmphasisStrong">bold italic</span>
+    result = bold_italic_re.replace_all(&result, r#"<span aid:cstyle="EmphasisStrong">$1</span>"#).to_string();
+    
+    // **bold** -> <span aid:cstyle="Strong">bold</span>
+    result = bold_re.replace_all(&result, r#"<span aid:cstyle="Strong">$1</span>"#).to_string();
+    
+    // *italic* -> <span aid:cstyle="Emphasis">italic</span>
+    result = italic_re.replace_all(&result, r#"<span aid:cstyle="Emphasis">$1</span>"#).to_string();
+    
+    // _italic_ -> <span aid:cstyle="Emphasis">italic</span>
+    result = underscore_italic_re.replace_all(&result, r#"<span aid:cstyle="Emphasis">$1</span>"#).to_string();
+    
+    result
+}
+
 // ============================================================
 // Database Functions
 // ============================================================
