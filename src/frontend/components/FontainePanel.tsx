@@ -303,6 +303,14 @@ export const FontainePanel: React.FC<FontainePanelProps> = ({
       .catch(e => console.error('Failed to load user profile', e));
   }, []);
 
+  // Listen for native menu "Lokales Modell verwalten" event
+  useEffect(() => {
+    const unlisten = listen('menu_ai_local_model', () => {
+      setShowModelSettings(true);
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
+
   // Chunked Entity-Extraction Events (Progress / Done / Error)
   useEffect(() => {
     const unsubscribers: Array<Promise<() => void>> = [];
