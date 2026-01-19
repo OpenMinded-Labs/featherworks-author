@@ -167,6 +167,32 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
   
   const contentRef = useRef<HTMLDivElement>(null);
 
+  // Reload settings when window gets focus (user may have changed them in sidebar)
+  useEffect(() => {
+    if (!embedded) return;
+    
+    const reloadSettings = async () => {
+      try {
+        const s = await invoke<LayoutSettings>('get_layout_settings');
+        setSettings(prev => ({ ...DEFAULT_SETTINGS, ...s }));
+        console.log('[LayoutPreview] Settings reloaded on focus');
+      } catch (e) {
+        console.error('[LayoutPreview] Failed to reload settings:', e);
+      }
+    };
+
+    // Reload on window focus
+    window.addEventListener('focus', reloadSettings);
+    
+    // Also poll every 2 seconds for live updates while visible
+    const interval = setInterval(reloadSettings, 2000);
+
+    return () => {
+      window.removeEventListener('focus', reloadSettings);
+      clearInterval(interval);
+    };
+  }, [embedded]);
+
   // CRITICAL: Force full viewport on mount - only for standalone mode
   useEffect(() => {
     if (embedded) return; // Skip viewport forcing in embedded mode

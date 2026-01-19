@@ -199,6 +199,7 @@ export const LayoutEditor: React.FC<LayoutEditorProps> = ({
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [showPreviewDropdown, setShowPreviewDropdown] = useState(false);
 
   const previewGeometry = useMemo(() => {
     if (!settings) return null;
@@ -467,54 +468,105 @@ export const LayoutEditor: React.FC<LayoutEditorProps> = ({
       <div className="layout-editor-header">
         <h2>📐 Layout & Export</h2>
         <div className="header-actions">
-          <button
-            className="btn btn-preview"
-            onClick={async () => {
-              try {
-                if (dirty && settings && metadata) {
-                  await Promise.all([
-                    invoke('save_layout_settings', { settings }),
-                    invoke('save_book_metadata', { metadata }),
-                  ]);
-                  setDirty(false);
-                }
-                if (onOpenCssPreview) {
-                  onOpenCssPreview();
-                } else {
-                  await invoke('open_preview_window');
-                }
-              } catch (e) {
-                console.error('open_preview_window failed', e);
-              }
-            }}
-            title="Live-Vorschau des Layouts (Schnell)"
-          >
-            ⚡ Live-Vorschau
-          </button>
-          <button
-            className="btn btn-secondary"
-            onClick={async () => {
-              try {
-                if (dirty && settings && metadata) {
-                  await Promise.all([
-                    invoke('save_layout_settings', { settings }),
-                    invoke('save_book_metadata', { metadata }),
-                  ]);
-                  setDirty(false);
-                }
-                if (onOpenPdfPreview) {
-                  onOpenPdfPreview();
-                } else {
-                  await invoke('open_pdf_preview_window');
-                }
-              } catch (e) {
-                console.error('open_pdf_preview_window failed', e);
-              }
-            }}
-            title="Druckvorschau als PDF generieren (Exakt)"
-          >
-            � PDF-Vorschau
-          </button>
+          <div className="preview-dropdown-container" style={{ position: 'relative' }}>
+            <button
+              className="btn btn-preview"
+              onClick={() => setShowPreviewDropdown(!showPreviewDropdown)}
+              title="Vorschau öffnen"
+            >
+              👁️ Vorschau
+              <span style={{ fontSize: '10px', marginLeft: '4px', opacity: 0.7 }}>▾</span>
+            </button>
+            {showPreviewDropdown && (
+              <div 
+                className="layout-preview-dropdown"
+                onMouseLeave={() => setShowPreviewDropdown(false)}
+                style={{
+                  position: 'absolute',
+                  top: '100%',
+                  left: 0,
+                  marginTop: '4px',
+                  background: 'var(--bg-secondary, #1e1e1e)',
+                  border: '1px solid var(--border-color, #333)',
+                  borderRadius: '8px',
+                  boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
+                  zIndex: 2147483647,
+                  minWidth: '180px',
+                  overflow: 'hidden',
+                }}
+              >
+                <button 
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    padding: '10px 14px',
+                    background: 'transparent',
+                    border: 'none',
+                    borderBottom: '1px solid var(--border-color, #333)',
+                    color: 'var(--text-primary, #f0f0f0)',
+                    fontSize: '13px',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                  }}
+                  onClick={async () => {
+                    setShowPreviewDropdown(false);
+                    try {
+                      if (dirty && settings && metadata) {
+                        await Promise.all([
+                          invoke('save_layout_settings', { settings }),
+                          invoke('save_book_metadata', { metadata }),
+                        ]);
+                        setDirty(false);
+                      }
+                      if (onOpenCssPreview) {
+                        onOpenCssPreview();
+                      } else {
+                        await invoke('open_preview_window');
+                      }
+                    } catch (e) {
+                      console.error('open_preview_window failed', e);
+                    }
+                  }}
+                >
+                  ⚡ Live-Vorschau (Schnell)
+                </button>
+                <button 
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    padding: '10px 14px',
+                    background: 'transparent',
+                    border: 'none',
+                    color: 'var(--text-primary, #f0f0f0)',
+                    fontSize: '13px',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                  }}
+                  onClick={async () => {
+                    setShowPreviewDropdown(false);
+                    try {
+                      if (dirty && settings && metadata) {
+                        await Promise.all([
+                          invoke('save_layout_settings', { settings }),
+                          invoke('save_book_metadata', { metadata }),
+                        ]);
+                        setDirty(false);
+                      }
+                      if (onOpenPdfPreview) {
+                        onOpenPdfPreview();
+                      } else {
+                        await invoke('open_pdf_preview_window');
+                      }
+                    } catch (e) {
+                      console.error('open_pdf_preview_window failed', e);
+                    }
+                  }}
+                >
+                  📄 PDF-Vorschau (Exakt)
+                </button>
+              </div>
+            )}
+          </div>
           {dirty && <span className="unsaved-indicator">●</span>}
           <button
             className="btn btn-primary"

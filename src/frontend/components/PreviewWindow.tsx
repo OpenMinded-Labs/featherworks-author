@@ -919,6 +919,8 @@ export const PreviewWindow: React.FC<PreviewWindowProps> = ({ embedded = false, 
           padding: 24px;
           overflow: auto;
           background: #2a2a2a;
+          width: 100%;
+          box-sizing: border-box;
         }
         .preview-spread.hidden {
           display: none;
@@ -927,7 +929,14 @@ export const PreviewWindow: React.FC<PreviewWindowProps> = ({ embedded = false, 
           background: white;
           box-shadow: 0 4px 20px rgba(0,0,0,0.4);
           border-radius: 4px;
-          flex-shrink: 0;
+          flex-shrink: 1;
+          max-width: calc(50% - 24px);
+          height: auto;
+        }
+        .preview-page canvas {
+          width: 100%;
+          height: auto;
+          display: block;
         }
         /* Navigation arrows on hover */
         .nav-arrow {
