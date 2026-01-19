@@ -2429,6 +2429,73 @@ fn is_model_available(model_id: String, app: tauri::AppHandle) -> Result<bool, S
     Ok(downloader::get_model_path(&model_id, resource_dir).is_some())
 }
 
+/// Detailed model info with download status
+#[derive(serde::Serialize)]
+struct ModelDetailedInfo {
+    id: String,
+    name: String,
+    size_bytes: u64,
+    size_display: String,
+    ram_required_mb: u32,
+    quantization: String,
+    is_downloaded: bool,
+    is_downloading: bool,
+    download_url: Option<String>,
+}
+
+/// Get all models with detailed status
+#[tauri::command]
+fn get_models_with_status(app: tauri::AppHandle) -> Vec<ModelDetailedInfo> {
+    let resource_dir = app.path_resolver().resource_dir();
+    
+    registry::REGISTRY.iter().map(|m| {
+        let is_downloaded = downloader::get_model_path(m.id, resource_dir.clone()).is_some();
+        let is_downloading = downloader::get_progress()
+            .map(|p| p.model_id == m.id && matches!(p.status, downloader::DownloadStatus::Downloading))
+            .unwrap_or(false);
+        
+        // Format size nicely
+        let size_display = if m.size_bytes >= 1_000_000_000 {
+            format!("{:.1} GB", m.size_bytes as f64 / 1_000_000_000.0)
+        } else {
+            format!("{:.0} MB", m.size_bytes as f64 / 1_000_000.0)
+        };
+        
+        ModelDetailedInfo {
+            id: m.id.to_string(),
+            name: m.name.to_string(),
+            size_bytes: m.size_bytes,
+            size_display,
+            ram_required_mb: m.ram_required_mb,
+            quantization: m.quantization.to_string(),
+            is_downloaded,
+            is_downloading,
+            download_url: m.download_url.map(|s| s.to_string()),
+        }
+    }).collect()
+}
+
+/// Delete a downloaded model
+#[tauri::command]
+fn delete_downloaded_model(model_id: String) -> Result<(), String> {
+    let models_dir = downloader::get_models_dir().map_err(|e| e.to_string())?;
+    
+    // Try both possible filenames
+    let paths = vec![
+        models_dir.join(format!("{}.gguf", model_id)),
+        models_dir.join(format!("{}.gguf.partial", model_id)),
+    ];
+    
+    for path in paths {
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+            log::info!("[delete_model] Deleted: {:?}", path);
+        }
+    }
+    
+    Ok(())
+}
+
 #[tauri::command]
 fn get_ai_settings(state: State<AppState>) -> Result<featherworks_author::storage::database::AiSettings, String> {
     let db_lock = state.db.lock().map_err(|e| e.to_string())?;
@@ -3956,6 +4023,8 @@ pub fn run() {
             , get_download_progress
             , cancel_model_download
             , is_model_available
+            , get_models_with_status
+            , delete_downloaded_model
             , spell_check
             , spell_suggest
             , spell_add_word

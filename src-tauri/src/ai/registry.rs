@@ -38,31 +38,31 @@ pub struct ModelInfo {
 
 /// Model Registry - all supported models
 pub static REGISTRY: &[ModelInfo] = &[
-    // Default model - bundled with the app (128K context version!)
+    // Default model - downloaded on first use
     ModelInfo { 
         id: "phi-3-mini", 
         name: "Phi-3 Mini 128K",
-        file: "models/phi-3-mini-128K-Instruct_q4_k_m.gguf", 
+        file: "phi-3-mini-128K-Instruct_q4_k_m.gguf", 
         kind: ModelKind::Phi3Mini, 
         // 128K context - use 16384 for efficiency, can go higher if needed
         params: ModelParams { ctx: 16384, temperature: 0.7, top_p: 0.9, repeat_penalty: 1.1, gpu_layers: 99 },
-        size_bytes: 2_400_000_000,  // ~2.3 GB
+        size_bytes: 2_394_518_624,  // ~2.3 GB
         ram_required_mb: 4096,       // 4 GB RAM minimum
-        is_bundled: true,
-        download_url: None,
+        is_bundled: false,
+        download_url: Some("https://huggingface.co/microsoft/Phi-3-mini-128k-instruct-gguf/resolve/main/Phi-3-mini-128k-instruct-q4.gguf"),
         quantization: "Q4_K_M",
     },
     // Optional high-performance model - downloaded on demand
     ModelInfo { 
-        id: "ministral-8b", 
-        name: "Ministral 8B",
-        file: "models/ministral-8b-instruct-2410-q4_k_m.gguf", 
+        id: "mistral-7b", 
+        name: "Mistral 7B Instruct",
+        file: "mistral-7b-instruct-v0.3-q4_k_m.gguf", 
         kind: ModelKind::Ministral8B, 
         params: ModelParams { ctx: 8192, temperature: 0.7, top_p: 0.9, repeat_penalty: 1.1, gpu_layers: 99 },
-        size_bytes: 4_900_000_000,  // ~4.9 GB
-        ram_required_mb: 8192,       // 8 GB RAM minimum
+        size_bytes: 4_368_438_976,  // ~4.1 GB
+        ram_required_mb: 6144,       // 6 GB RAM minimum
         is_bundled: false,
-        download_url: Some("https://huggingface.co/mistralai/Ministral-8B-Instruct-2410-GGUF/resolve/main/ministral-8b-instruct-2410-q4_k_m.gguf"),
+        download_url: Some("https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf"),
         quantization: "Q4_K_M",
     },
 ];

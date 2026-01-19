@@ -27,8 +27,11 @@ interface ModelInfo {
   name: string;
   quantization: string;
   size_bytes: number;
+  size_display?: string;
   ram_required_mb: number;
   is_bundled: boolean;
+  is_downloaded?: boolean;
+  is_downloading?: boolean;
   download_url: string | null;
 }
 
@@ -91,15 +94,19 @@ export const AiSettingsPanel: React.FC<AiSettingsPanelProps> = ({ onClose }) => 
       const [settingsData, hardwareData, modelsData] = await Promise.all([
         invoke<AiSettings>('get_ai_settings'),
         invoke<HardwareInfo>('detect_hardware'),
-        invoke<ModelInfo[]>('list_model_registry'),
+        invoke<ModelInfo[]>('get_models_with_status'),
       ]);
       
       setSettings(settingsData);
       setHardware(hardwareData);
       setModels(modelsData);
       
-      // Check availability of each model
-      await checkModelAvailability();
+      // Build availability from model status
+      const availability: Record<string, boolean> = {};
+      modelsData.forEach(m => {
+        availability[m.id] = m.is_downloaded || m.is_bundled;
+      });
+      setModelAvailability(availability);
       
       // Check if there's an ongoing download
       const progress = await invoke<DownloadProgress | null>('get_download_progress');
@@ -112,15 +119,18 @@ export const AiSettingsPanel: React.FC<AiSettingsPanelProps> = ({ onClose }) => 
   };
 
   const checkModelAvailability = async () => {
-    const availability: Record<string, boolean> = {};
-    for (const model of models) {
-      try {
-        availability[model.id] = await invoke<boolean>('is_model_available', { modelId: model.id });
-      } catch {
-        availability[model.id] = false;
-      }
+    try {
+      const modelsData = await invoke<ModelInfo[]>('get_models_with_status');
+      setModels(modelsData);
+      
+      const availability: Record<string, boolean> = {};
+      modelsData.forEach(m => {
+        availability[m.id] = m.is_downloaded || m.is_bundled;
+      });
+      setModelAvailability(availability);
+    } catch (e) {
+      console.error('Failed to check model availability:', e);
     }
-    setModelAvailability(availability);
   };
 
   const saveSettings = async (newSettings: AiSettings) => {
@@ -180,6 +190,25 @@ export const AiSettingsPanel: React.FC<AiSettingsPanelProps> = ({ onClose }) => 
     try {
       await invoke('cancel_model_download');
       setDownloadProgress(null);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  const deleteModel = async (modelId: string) => {
+    const model = models.find(m => m.id === modelId);
+    if (!model) return;
+    
+    const confirmed = window.confirm(
+      `Modell "${model.name}" wirklich löschen? (${model.size_display || formatBytes(model.size_bytes)})`
+    );
+    
+    if (!confirmed) return;
+    
+    try {
+      await invoke('delete_downloaded_model', { modelId });
+      // Refresh model list
+      await checkModelAvailability();
     } catch (e) {
       setError(String(e));
     }
@@ -326,18 +355,30 @@ export const AiSettingsPanel: React.FC<AiSettingsPanelProps> = ({ onClose }) => 
                 )}
 
                 {!isDownloading && (
-                  <button
-                    className={`select-btn ${isSelected ? 'selected' : ''}`}
-                    onClick={() => handleSelectModel(model.id)}
-                    disabled={!canRun || saving || isDownloading}
-                  >
-                    {isSelected 
-                      ? t('ai.settings.selected', '✓ Ausgewählt')
-                      : isAvailable 
-                        ? t('ai.settings.select', 'Auswählen')
-                        : t('ai.settings.download', 'Herunterladen')
-                    }
-                  </button>
+                  <div className="model-actions">
+                    <button
+                      className={`select-btn ${isSelected ? 'selected' : ''}`}
+                      onClick={() => handleSelectModel(model.id)}
+                      disabled={!canRun || saving || isDownloading}
+                    >
+                      {isSelected 
+                        ? t('ai.settings.selected', '✓ Ausgewählt')
+                        : isAvailable 
+                          ? t('ai.settings.select', 'Auswählen')
+                          : t('ai.settings.download', '⬇️ Herunterladen')
+                      }
+                    </button>
+                    {isAvailable && !model.is_bundled && (
+                      <button
+                        className="delete-btn"
+                        onClick={() => deleteModel(model.id)}
+                        disabled={isSelected}
+                        title={isSelected ? 'Ausgewähltes Modell kann nicht gelöscht werden' : 'Modell löschen'}
+                      >
+                        🗑️
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             );
