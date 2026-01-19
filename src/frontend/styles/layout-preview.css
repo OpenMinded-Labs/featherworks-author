@@ -42,10 +42,22 @@
   margin: 0 !important;
 }
 
+.preview-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .preview-header h1 {
   margin: 0;
   font-size: 16px;
   font-weight: 600;
+}
+
+.preview-header h1 span {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted, #888);
 }
 
 /* Controls */
@@ -266,24 +278,40 @@
 .preview-page {
   background: white;
   color: #1a1a1a;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+  border-radius: 2px;
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
-.preview-page p {
+.page-content {
+  height: 100%;
+  overflow: hidden;
+}
+
+.page-number {
+  position: absolute;
+  bottom: 10px; /* Will be overridden by inline for left/right */
+  font-size: 12px; /* ~9pt */
+  color: #666;
+}
+
+/* Sample Content Styles - Base styles, dynamic values via inline */
+.sample-content p {
   margin: 0 0 0.1em 0;
 }
 
-.preview-page h1,
-.preview-page h2 {
-  margin: 0;
+.sample-content .scene-break {
+  text-align: center;
+  margin: 15px 0;
 }
 
-/* Typography Elements */
+/* Typography Elements - Base layout, font-size set dynamically */
 .drop-cap {
   float: left;
   line-height: 0.8;
-  padding-right: 0.1em;
-  margin-top: 0.1em;
-  font-weight: bold;
+  /* font-size set dynamically based on settings.dropCapLines */
 }
 
 .scene-break {

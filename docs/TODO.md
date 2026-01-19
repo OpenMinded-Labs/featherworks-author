@@ -8,6 +8,12 @@ Dieses Dokument enthält die tatsächlich offenen Aufgaben und nächsten Schritt
 
 ## 🔴 Kritisch (vor Release)
 
+### Lizenzen
+- [ ] "Über" Dialog oder Settings mit Lizenzen
+  - Phi-3-mini: MIT License (Microsoft)
+  - Mistral-7B: Apache 2.0 License
+  - Andere Dependencies (React, Tauri, etc.)
+
 ### UX/Polish
 - [ ] Fehlerbehandlung für fehlgeschlagene AI-Requests (User-Feedback)
 - [ ] Loading-States für alle async Operationen

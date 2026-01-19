@@ -463,23 +463,12 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
           width: `${width}px`,
           height: `${height}px`,
           padding: `${marginTop}px ${rightMargin}px ${marginBottom}px ${leftMargin}px`,
-          background: 'white',
-          color: '#1a1a1a',
-          boxShadow: '0 4px 20px rgba(0,0,0,0.4)',
-          borderRadius: '2px',
-          position: 'relative',
-          overflow: 'hidden',
-          boxSizing: 'border-box',
         }}
       >
         {/* Page content placeholder - will be populated by paginated content */}
         <div 
           className="page-content"
-          style={{
-            ...fontStyles,
-            height: '100%',
-            overflow: 'hidden',
-          }}
+          style={fontStyles}
           lang={settings.hyphenationLang || 'de'}
         >
           {/* Content will be rendered here based on pagination */}
@@ -490,13 +479,10 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
           <div 
             className="page-number"
             style={{
-              position: 'absolute',
               bottom: `${marginBottom * 0.4}px`,
               left: isLeftPage ? `${leftMargin}px` : 'auto',
               right: isLeftPage ? 'auto' : `${rightMargin}px`,
-              fontSize: `${9 * PT_TO_PX }px`,
               fontFamily: fontStyles.fontFamily,
-              color: '#666',
             }}
           >
             {pageNum}
@@ -506,31 +492,37 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
     );
   };
 
+  // Dynamic styles for drop caps (depends on settings)
+  const dropCapStyle = useMemo(() => ({
+    float: 'left' as const,
+    fontSize: `${settings.fontSize * PT_TO_PX * (settings.dropCapLines || 3)}px`,
+    lineHeight: 0.8,
+    marginRight: `${3 * MM_TO_PX}px`,
+    marginTop: `${2 * MM_TO_PX}px`,
+    fontWeight: 'normal' as const,
+  }), [settings.fontSize, settings.dropCapLines]);
+
+  // Dynamic styles for chapter titles (depends on settings)
+  const chapterTitleStyle = useMemo(() => ({
+    fontFamily: settings.chapterTitleFont || fontStyles.fontFamily,
+    fontSize: `${(settings.chapterTitleSize || 18) * PT_TO_PX}px`,
+    textAlign: 'center' as const,
+    marginBottom: `${20 * MM_TO_PX}px`,
+    fontWeight: 'normal' as const,
+  }), [settings.chapterTitleFont, settings.chapterTitleSize, fontStyles.fontFamily]);
+
   // Render sample content for preview
   const renderSampleContent = () => {
     if (chapters.length === 0) {
       // Show sample text if no content
       return (
-        <div style={fontStyles} lang={settings.hyphenationLang || 'de'}>
-          <h2 style={{ 
-            fontFamily: settings.chapterTitleFont || fontStyles.fontFamily,
-            fontSize: `${(settings.chapterTitleSize || 18) * PT_TO_PX }px`,
-            textAlign: 'center',
-            marginBottom: `${20 * MM_TO_PX }px`,
-            fontWeight: 'normal',
-          }}>
+        <div className="sample-content" style={fontStyles} lang={settings.hyphenationLang || 'de'}>
+          <h2 style={chapterTitleStyle}>
             Kapitel 1
           </h2>
-          <p style={{ textIndent: 0 }}>
+          <p>
             {settings.dropCapEnabled && (
-              <span style={{
-                float: 'left',
-                fontSize: `${settings.fontSize * PT_TO_PX * (settings.dropCapLines || 3)}px`,
-                lineHeight: 0.8,
-                marginRight: `${3 * MM_TO_PX }px`,
-                marginTop: `${2 * MM_TO_PX }px`,
-                fontWeight: 'normal',
-              }}>D</span>
+              <span className="drop-cap" style={dropCapStyle}>D</span>
             )}
             {settings.dropCapEnabled ? 'ies' : 'Dies'} ist ein Beispieltext, der zeigt, wie Ihr Buch im fertigen Layout aussehen wird. 
             Die Einstellungen auf der linken Seite wirken sich direkt auf diese Vorschau aus.
@@ -540,11 +532,7 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
             Manuskript zu finden. Die Silbentrennung und der Blocksatz sorgen für ein professionelles 
             Erscheinungsbild.
           </p>
-          <div style={{ 
-            textAlign: 'center', 
-            margin: `${15 * MM_TO_PX }px 0`,
-            fontSize: fontStyles.fontSize,
-          }}>
+          <div className="scene-break">
             {SCENE_BREAKS[settings.sceneBreakStyle] || settings.sceneBreakCustom || '* * *'}
           </div>
           <p>
@@ -557,25 +545,17 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
 
     // Render actual content
     return chapters.map((chapter, chIdx) => (
-      <div key={chapter.id} className="chapter">
-        <h2 style={{ 
-          fontFamily: settings.chapterTitleFont || fontStyles.fontFamily,
-          fontSize: `${(settings.chapterTitleSize || 18) * PT_TO_PX }px`,
-          textAlign: 'center',
-          marginBottom: `${20 * MM_TO_PX }px`,
-          marginTop: chIdx > 0 ? `${40 * MM_TO_PX }px` : 0,
-          fontWeight: 'normal',
-          pageBreakBefore: chIdx > 0 ? 'always' : 'auto',
+      <div key={chapter.id} className="chapter-block" style={chIdx > 0 ? { pageBreakBefore: 'always' } : undefined}>
+        <h2 style={{
+          ...chapterTitleStyle,
+          marginTop: chIdx > 0 ? `${40 * MM_TO_PX}px` : 0,
         }}>
           {chapter.title}
         </h2>
         {chapter.scenes.map((scene, scIdx) => (
           <div key={scene.id} className="scene">
             {scIdx > 0 && (
-              <div style={{ 
-                textAlign: 'center', 
-                margin: `${15 * MM_TO_PX }px 0`,
-              }}>
+              <div className="scene-break">
                 {SCENE_BREAKS[settings.sceneBreakStyle] || settings.sceneBreakCustom || '* * *'}
               </div>
             )}
@@ -584,18 +564,11 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
                 key={pIdx}
                 style={{
                   textIndent: pIdx === 0 && scIdx === 0 ? 0 : fontStyles.textIndent,
-                  marginBottom: `${settings.paragraphSpacing * MM_TO_PX }px`,
+                  marginBottom: `${settings.paragraphSpacing * MM_TO_PX}px`,
                 }}
               >
                 {pIdx === 0 && scIdx === 0 && settings.dropCapEnabled && para.length > 0 && (
-                  <span style={{
-                    float: 'left',
-                    fontSize: `${settings.fontSize * PT_TO_PX * (settings.dropCapLines || 3)}px`,
-                    lineHeight: 0.8,
-                    marginRight: `${3 * MM_TO_PX }px`,
-                    marginTop: `${2 * MM_TO_PX }px`,
-                    fontWeight: 'normal',
-                  }}>{para[0]}</span>
+                  <span className="drop-cap" style={dropCapStyle}>{para[0]}</span>
                 )}
                 {pIdx === 0 && scIdx === 0 && settings.dropCapEnabled ? para.slice(1) : para}
               </p>
@@ -664,7 +637,7 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
           boxSizing: 'border-box',
         }}
       >
-        <div className="preview-header-left" style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <div className="preview-header-left">
           {/* Back button only shown when internal (not using sidebar) */}
           {embedded && onBack && !hideSettingsProp && (
             <button 
@@ -688,8 +661,8 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
               ← Editor
             </button>
           )}
-          <h1 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>
-            📐 Layout-Vorschau <span style={{ fontSize: '11px', fontWeight: 400, color: 'var(--text-muted, #888)' }}>(Live)</span>
+          <h1>
+            📐 Layout-Vorschau <span>(Live)</span>
           </h1>
         </div>
         <div className="preview-controls">
@@ -787,7 +760,7 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
               height: '100%',
             }}
           >
-            <h3 style={{ margin: '0 0 16px 0', fontSize: '14px', fontWeight: 600 }}>Einstellungen</h3>
+            <h3>Einstellungen</h3>
             
             {/* Paper Size */}
             <div className="settings-section">
