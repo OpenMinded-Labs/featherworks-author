@@ -1,0 +1,349 @@
+/* Layout Preview Window - Full Viewport Styles */
+/* ============================================= */
+/* NOTE: Global html/body styles are applied via JavaScript in LayoutPreview.tsx */
+/* This prevents interference with the main app */
+
+/* Main Layout Container - FIXED FULLSCREEN */
+/* Only styled when actually rendered in the preview window */
+.layout-preview {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  display: flex !important;
+  flex-direction: column !important;
+  background: #1a1a1a !important;
+  color: #f0f0f0 !important;
+  overflow: hidden !important;
+  z-index: 99999 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  box-sizing: border-box !important;
+}
+
+/* Header Bar - FIXED HEIGHT */
+.layout-preview .preview-header {
+  flex: 0 0 50px !important;
+  height: 50px !important;
+  min-height: 50px !important;
+  max-height: 50px !important;
+  display: flex !important;
+  justify-content: space-between !important;
+  align-items: center !important;
+  padding: 0 20px !important;
+  background: #222 !important;
+  border-bottom: 1px solid #333 !important;
+  box-sizing: border-box !important;
+  margin: 0 !important;
+}
+
+.preview-header h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* Controls */
+.preview-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.preview-controls button {
+  background: var(--bg-tertiary, #333);
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.preview-controls button:hover {
+  background: var(--bg-hover, #444);
+}
+
+.preview-controls button.active {
+  background: var(--accent-color, #4a9eff);
+  color: white;
+}
+
+.preview-controls .divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border-color, #444);
+  margin: 0 4px;
+}
+
+/* Main Body Area - CRITICAL: Takes all remaining space */
+.layout-preview .preview-body {
+  flex: 1 1 auto !important;
+  display: flex !important;
+  overflow: hidden !important;
+  position: relative !important;
+  min-height: 0 !important; /* Critical for flex shrinking */
+  height: calc(100vh - 50px) !important; /* Force height calculation */
+  max-height: calc(100vh - 50px) !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+/* Settings Sidebar */
+.layout-preview .preview-settings {
+  width: 280px !important;
+  flex: 0 0 280px !important;
+  background: #222 !important;
+  border-right: 1px solid #333 !important;
+  padding: 16px !important;
+  overflow-y: auto !important;
+  box-sizing: border-box !important;
+  height: 100% !important;
+}
+
+.preview-settings h3 {
+  margin: 0 0 16px 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.settings-section {
+  margin-bottom: 16px;
+}
+
+.settings-section > label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted, #888);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.settings-section select,
+.settings-section input[type="number"] {
+  background: var(--bg-tertiary, #333);
+  border: 1px solid var(--border-color, #444);
+  border-radius: 4px;
+  padding: 5px 8px;
+  color: inherit;
+  font-size: 13px;
+}
+
+.settings-section select {
+  width: 100%;
+}
+
+.dimension-inputs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.dimension-inputs input {
+  width: 60px;
+}
+
+.margin-grid {
+  display: grid;
+  gap: 6px;
+}
+
+.margin-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.margin-row span {
+  width: 45px;
+  font-size: 12px;
+}
+
+.margin-row input {
+  width: 55px;
+}
+
+.typo-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.typo-row span:first-child {
+  width: 65px;
+  font-size: 12px;
+}
+
+.typo-row select {
+  flex: 1;
+}
+
+.typo-row input {
+  width: 55px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.checkbox-row input[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+}
+
+.checkbox-row label {
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.settings-info {
+  margin-top: 16px;
+  padding: 10px;
+  background: var(--bg-tertiary, #333);
+  border-radius: 6px;
+}
+
+.settings-info small {
+  font-size: 11px;
+  color: var(--text-muted, #888);
+  line-height: 1.4;
+}
+
+/* Preview Content Area - CRITICAL: This is where scrolling happens */
+.layout-preview .preview-content {
+  flex: 1 1 auto !important;
+  display: flex !important;
+  justify-content: center !important;
+  align-items: flex-start !important;
+  overflow: auto !important; /* SCROLL IS HERE */
+  background: #2a2a2a !important;
+  padding: 24px !important;
+  box-sizing: border-box !important;
+  min-height: 0 !important; /* Critical for flex shrinking */
+  height: 100% !important;
+}
+
+.preview-loading {
+  text-align: center;
+  padding: 40px;
+  color: var(--text-muted, #888);
+}
+
+/* Page Spread Container */
+.preview-spread {
+  display: flex;
+  gap: 2px;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.preview-spread.single {
+  gap: 0;
+}
+
+.preview-spread.single .preview-page-wrapper:first-child {
+  display: none;
+}
+
+/* Page Wrapper */
+.preview-page-wrapper {
+  flex-shrink: 0;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+}
+
+/* Page Content */
+.preview-page {
+  background: white;
+  color: #1a1a1a;
+}
+
+.preview-page p {
+  margin: 0 0 0.1em 0;
+}
+
+.preview-page h1,
+.preview-page h2 {
+  margin: 0;
+}
+
+/* Typography Elements */
+.drop-cap {
+  float: left;
+  line-height: 0.8;
+  padding-right: 0.1em;
+  margin-top: 0.1em;
+  font-weight: bold;
+}
+
+.scene-break {
+  text-align: center;
+  margin: 1.5em 0;
+  color: #666;
+}
+
+.chapter-block {
+  margin-top: 2em;
+}
+
+.manuscript-content-flow {
+  height: auto;
+}
+
+.empty-state {
+  color: #888;
+  text-align: center;
+  padding: 2em;
+}
+
+/* ============================================= */
+/* EMBEDDED MODE STYLES - Override fixed positioning */
+/* ============================================= */
+
+.layout-preview.embedded {
+  position: relative !important;
+  top: auto !important;
+  left: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  width: 100% !important;
+  height: 100% !important;
+  z-index: auto !important;
+}
+
+.layout-preview.embedded .preview-header {
+  flex: 0 0 50px !important;
+  height: 50px !important;
+  min-height: 50px !important;
+  max-height: 50px !important;
+}
+
+.layout-preview.embedded .preview-body {
+  height: calc(100% - 50px) !important;
+  max-height: calc(100% - 50px) !important;
+}
+
+.layout-preview.embedded .preview-settings {
+  height: 100% !important;
+}
+
+.layout-preview.embedded .preview-content {
+  height: 100% !important;
+}
+
+/* Preview Window embedded mode */
+.preview-window.embedded {
+  position: relative !important;
+  width: 100% !important;
+  height: 100% !important;
+}

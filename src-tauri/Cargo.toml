@@ -1,0 +1,95 @@
+[package]
+name = "featherworks_author"
+version = "0.1.0"
+description = "Professional writing software with local AI"
+authors = ["FeatherWorks Team"]
+edition = "2021"
+
+
+[build-dependencies]
+tauri-build = { version = "1", features = [] }
+
+[dependencies]
+tauri = { version = "1", features = [ "dialog-ask", "dialog-confirm", "fs-read-file", "dialog-message", "window-all", "path-all", "dialog-save", "fs-write-file", "dialog-open", "fs-exists"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.7", features = ["runtime-tokio-native-tls", "sqlite"] }
+rusqlite = { version = "0.30", features = ["bundled", "backup"] }
+aes-gcm = "0.10"
+argon2 = "0.5"
+rand = "0.8"
+calamine = "0.23"
+zip = "0.6"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.6", features = ["v4", "serde"] }
+thiserror = "1.0"
+anyhow = "1.0"
+log = "0.4"
+env_logger = "0.10"
+nanoid = "0.4"
+lz4_flex = "0.11"
+tempfile = "3.10"
+regex = "1.10"
+base64 = "0.22"
+zeroize = "1.7"
+once_cell = "1.19"
+similar = "2"
+fern = { version = "0.6", features = ["colored"] }
+cfg-if = "1"
+dirs = "5"
+# HTTP Client für LanguageTool API und Model Downloads
+# Note: Need to use native-tls instead of rustls to avoid rlib format issues
+reqwest = { version = "0.11", default-features = false, features = ["json", "native-tls", "stream", "blocking"] }
+# Async streaming
+futures-util = "0.3"
+# Hashing für Model Integritätsprüfung
+sha2 = "0.10"
+# Unicode-Decoding für Token-Ausgabe
+encoding_rs = "0.8"
+# Rechtschreibprüfung - TODO: hunspell-rs benötigt native libs, später einbinden
+# hunspell-rs = "0.4"
+
+# PDF Text Extraktion
+pdf-extract = "0.7"
+# ZIP für DOCX Text Extraktion (nutzt bereits vorhandenes zip crate)
+
+# Typst for professional typesetting (PDF, layout)
+typst = "0.12"
+typst-pdf = "0.12"
+typst-render = "0.12"
+comemo = "0.4"
+ecow = "0.2"
+fontdb = "0.22"
+ttf-parser = "0.25"
+
+# EPUB creation
+epub-builder = "0.7"
+
+# Optional echte lokale LLM-Integration (nur bei Feature "local-llm" eingebunden)
+# llama-cpp-2 ist das aktuelle, gut gepflegte Binding für llama.cpp
+# Metal-Support für Apple Silicon, CUDA für Windows (automatisch erkannt)
+llama-cpp-2 = { version = "0.1.129", optional = true, features = ["metal"] }
+
+# System-Info für Hardware Detection
+sysinfo = "0.31"
+async-trait = "0.1.89"
+open = "5.3.3"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "patch_bench"
+harness = false
+
+[features]
+default = ["custom-protocol", "local-llm"]
+custom-protocol = ["tauri/custom-protocol"]
+local-llm = ["llama-cpp-2"]
+
+[profile.release]
+strip = true
+opt-level = 3
+lto = true
+codegen-units = 1

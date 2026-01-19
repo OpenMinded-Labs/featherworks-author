@@ -1,0 +1,12 @@
+node_modules/
+src-tauri/target/
+.DS_Store
+resources/models/*.gguf
+resources/models/phi-3-mini/
+*.fwauthor
+dist/
+.vite/
+*.log
+.env
+.env.local
+featherworks-author-web/node_modules/

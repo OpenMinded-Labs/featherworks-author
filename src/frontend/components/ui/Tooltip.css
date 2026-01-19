@@ -1,0 +1,91 @@
+/**
+ * Tooltip Styles für Featherworks Author
+ */
+
+.tooltip-trigger {
+  display: inline-flex;
+  position: relative;
+}
+
+.tooltip {
+  position: fixed;
+  z-index: 10000;
+  pointer-events: none;
+  
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  
+  padding: 6px 10px;
+  border-radius: 6px;
+  
+  background: var(--tooltip-bg, #1a1a1a);
+  color: var(--tooltip-text, #ffffff);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  
+  animation: tooltip-fade-in 0.15s ease-out;
+  transform-origin: center;
+}
+
+/* Position-spezifische Transformationen */
+.tooltip-top {
+  transform: translateX(-50%) translateY(-100%);
+}
+
+.tooltip-bottom {
+  transform: translateX(-50%);
+}
+
+.tooltip-left {
+  transform: translateX(-100%) translateY(-50%);
+}
+
+.tooltip-right {
+  transform: translateY(-50%);
+}
+
+.tooltip-content {
+  color: inherit;
+}
+
+.tooltip-shortcut {
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.15);
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 11px;
+  font-family: ui-monospace, monospace;
+}
+
+@keyframes tooltip-fade-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-100%) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(-100%) scale(1);
+  }
+}
+
+/* Light Theme Anpassungen */
+[data-theme="light"] .tooltip {
+  --tooltip-bg: #333333;
+  --tooltip-text: #ffffff;
+}
+
+/* Dark Theme (default) */
+[data-theme="dark"] .tooltip {
+  --tooltip-bg: #1a1a1a;
+  --tooltip-text: #ffffff;
+}
+
+/* Sepia Theme */
+[data-theme="sepia"] .tooltip {
+  --tooltip-bg: #3d3629;
+  --tooltip-text: #f5f0e6;
+}

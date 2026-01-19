@@ -1,0 +1,20 @@
+[package]
+productName = "FeatherWorks Author"
+version = "0.1.0"
+
+[build]
+distDir = "../dist"
+devPath = "../dist"
+
+[tauri]
+
+	[tauri.bundle]
+	identifier = "com.featherworks.author"
+
+	[tauri.allowlist]
+	all = true
+
+	[[tauri.windows]]
+	width = 1000
+	height = 700
+	title = "FeatherWorks Author"
