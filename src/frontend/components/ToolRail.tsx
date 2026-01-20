@@ -3,6 +3,10 @@ import { useTranslation } from 'react-i18next';
 
 export type ToolId = 'info' | 'editor' | 'entities' | 'plot' | 'research' | 'proofreading' | 'thesaurus' | 'fontaine' | 'stats' | 'shortcuts' | 'human' | 'layout';
 
+// Tools that REQUIRE AI to be available (completely unusable without it)
+// Note: 'entities' is NOT here - it works without AI, just hides AI extraction features
+const AI_DEPENDENT_TOOLS: ToolId[] = ['fontaine'];
+
 interface ToolConfig {
   id: ToolId;
   icon: string;
@@ -30,12 +34,18 @@ interface Props {
   pinnedTool: ToolId | null;
   onToolClick: (id: ToolId) => void;
   onToolPin: (id: ToolId | null) => void;
+  /** True if AI is completely unavailable (disabled by user OR no model downloaded) */
+  aiUnavailable?: boolean;
 }
 
-export const ToolRail: React.FC<Props> = ({ activeTool, pinnedTool, onToolClick, onToolPin }) => {
+export const ToolRail: React.FC<Props> = ({ activeTool, pinnedTool, onToolClick, onToolPin, aiUnavailable = false }) => {
   const { t } = useTranslation();
 
   const handleClick = (id: ToolId) => {
+    // Don't allow clicking AI tools if AI is unavailable
+    if (aiUnavailable && AI_DEPENDENT_TOOLS.includes(id)) {
+      return;
+    }
     if (activeTool === id && !pinnedTool) {
       onToolClick(id);
     } else {
@@ -44,6 +54,10 @@ export const ToolRail: React.FC<Props> = ({ activeTool, pinnedTool, onToolClick,
   };
 
   const handleDoubleClick = (id: ToolId) => {
+    // Don't allow pinning AI tools if AI is unavailable
+    if (aiUnavailable && AI_DEPENDENT_TOOLS.includes(id)) {
+      return;
+    }
     if (pinnedTool === id) {
       onToolPin(null);
     } else {
@@ -56,19 +70,27 @@ export const ToolRail: React.FC<Props> = ({ activeTool, pinnedTool, onToolClick,
       {TOOLS.map((tool) => {
         const isActive = activeTool === tool.id;
         const isPinned = pinnedTool === tool.id;
+        const isAiTool = AI_DEPENDENT_TOOLS.includes(tool.id);
+        const isDisabled = aiUnavailable && isAiTool;
+        
+        const tooltipText = isDisabled 
+          ? t('tools.aiUnavailable', 'KI nicht verfügbar – Modell herunterladen oder aktivieren')
+          : t(tool.labelKey);
+        
         return (
           <button
             key={tool.id}
             type="button"
-            className={`tool-rail-item ${isActive ? 'active' : ''} ${isPinned ? 'pinned' : ''}`}
+            className={`tool-rail-item ${isActive ? 'active' : ''} ${isPinned ? 'pinned' : ''} ${isDisabled ? 'disabled' : ''}`}
             onClick={() => handleClick(tool.id)}
             onDoubleClick={() => handleDoubleClick(tool.id)}
-            title={t(tool.labelKey)}
-            aria-label={t(tool.labelKey)}
+            title={tooltipText}
+            aria-label={tooltipText}
+            disabled={isDisabled}
           >
             <span className="tool-rail-icon">
               {tool.isImage ? (
-                <img src={tool.icon} alt={t(tool.labelKey)} className="tool-rail-img" />
+                <img src={tool.icon} alt={t(tool.labelKey)} className={`tool-rail-img ${isDisabled ? 'grayscale' : ''}`} />
               ) : (
                 tool.icon
               )}

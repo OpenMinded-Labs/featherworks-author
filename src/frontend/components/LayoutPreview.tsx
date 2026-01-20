@@ -61,12 +61,32 @@ interface LayoutSettings {
   marginInner: number;
   marginOuter: number;
   mirrorMargins?: boolean;
+  // Body text
   fontFamily: string;
   fontSize: number;
   lineHeight: number;
   paragraphSpacing: number;
   firstLineIndent: number;
   textAlign?: string;
+  // Headers & Running Headers
+  headerFont?: string;
+  headerFontSize?: number;
+  // Page Numbers
+  pageNumberFont?: string;
+  pageNumberFontSize?: number;
+  // Title Page
+  titlePageTitleFont?: string;
+  titlePageTitleSize?: number;
+  titlePageAuthorFont?: string;
+  titlePageAuthorSize?: number;
+  titlePagePublisherFont?: string;
+  titlePagePublisherSize?: number;
+  // Table of Contents
+  tocFont?: string;
+  tocFontSize?: number;
+  tocTitleFont?: string;
+  tocTitleSize?: number;
+  // Other settings
   preventWidows?: boolean;
   preventOrphans?: boolean;
   hyphenation: boolean;
@@ -1061,7 +1081,8 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
                       position: 'absolute',
                       top: `${pageDimensions.marginTop * 0.3}px`,
                       left: `${pageDimensions.marginInner}px`,
-                      fontSize: `${8 * PT_TO_PX }px`,
+                      fontSize: `${(settings.headerFontSize || 9) * PT_TO_PX }px`,
+                      fontFamily: settings.headerFont ? `"${settings.headerFont}", serif` : fontStyles.fontFamily,
                       color: '#888',
                       fontStyle: 'italic',
                     }}>
@@ -1073,7 +1094,8 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
                       position: 'absolute',
                       bottom: `${pageDimensions.marginBottom * 0.4}px`,
                       left: `${pageDimensions.marginInner}px`,
-                      fontSize: `${9 * PT_TO_PX }px`,
+                      fontSize: `${(settings.pageNumberFontSize || 10) * PT_TO_PX }px`,
+                      fontFamily: settings.pageNumberFont ? `"${settings.pageNumberFont}", serif` : fontStyles.fontFamily,
                       color: '#666',
                     }}>
                       2
@@ -1119,7 +1141,8 @@ export const LayoutPreview: React.FC<LayoutPreviewProps> = ({
                       position: 'absolute',
                       top: `${pageDimensions.marginTop * 0.3}px`,
                       right: `${pageDimensions.marginOuter}px`,
-                      fontSize: `${8 * PT_TO_PX }px`,
+                      fontSize: `${(settings.headerFontSize || 9) * PT_TO_PX }px`,
+                      fontFamily: settings.headerFont ? `"${settings.headerFont}", serif` : fontStyles.fontFamily,
                       color: '#888',
                       fontStyle: 'italic',
                     }}>

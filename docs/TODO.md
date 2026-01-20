@@ -59,11 +59,17 @@ Dieses Dokument enthält die tatsächlich offenen Aufgaben und nächsten Schritt
 - [ ] Bessere Prompt-Templates
 - [x] Model-Download in-App (Phi-3, Mistral von HuggingFace)
 - [x] Mehr Provider (Mistral, Ollama)
-- [ ] **KI-Funktionen ausblenden wenn keine AI geladen/aktiviert**
-  - Fontaine-Button in ToolRail ausgrauen oder verstecken
-  - Lektorat-Button im Editor deaktivieren  
-  - Entity-Extraction Button deaktivieren
-  - Hinweis zeigen: "KI-Modell herunterladen, um diese Funktion zu nutzen"
+- [x] **KI-Funktionen ausblenden wenn keine AI geladen/aktiviert**
+  - Fontaine-Button in ToolRail ausgrauen
+  - Entity-Extraction Button versteckt wenn AI off
+- [x] "Lokale KI verwalten" Dialog (Menü → KI → Lokales Modell verwalten)
+  - RAG-Dokumente anzeigen/hinzufügen/löschen
+  - KI ein/aus Toggle
+  - Model-Status anzeigen
+- [ ] **Mistral 7B als alternatives Modell** (Future)
+  - Download-Button im LocalAI Dialog
+  - Automatische Umschaltung wenn ausgewählt
+  - Größeres Modell für bessere Ergebnisse
 
 ### Statistiken
 - [ ] Produktivitäts-Dashboard

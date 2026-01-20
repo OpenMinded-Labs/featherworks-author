@@ -36,7 +36,7 @@ pub struct LayoutSettings {
     #[serde(default = "default_true")]
     pub mirror_margins: bool,
     
-    // Typography
+    // Typography - Body Text
     #[serde(rename = "fontFamily")]
     pub font_family: String,
     #[serde(rename = "fontSize")]
@@ -47,6 +47,49 @@ pub struct LayoutSettings {
     pub paragraph_spacing: f64,
     #[serde(rename = "firstLineIndent")]
     pub first_line_indent: f64,
+    
+    // Typography - Headers & Running Headers
+    #[serde(rename = "headerFont")]
+    pub header_font: Option<String>,  // Running headers (Kolumnentitel)
+    #[serde(rename = "headerFontSize")]
+    #[serde(default = "default_header_font_size")]
+    pub header_font_size: f64,
+    
+    // Typography - Page Numbers
+    #[serde(rename = "pageNumberFont")]
+    pub page_number_font: Option<String>,
+    #[serde(rename = "pageNumberFontSize")]
+    #[serde(default = "default_page_number_font_size")]
+    pub page_number_font_size: f64,
+    
+    // Typography - Title Page
+    #[serde(rename = "titlePageTitleFont")]
+    pub title_page_title_font: Option<String>,  // Buchtitel
+    #[serde(rename = "titlePageTitleSize")]
+    #[serde(default = "default_title_page_title_size")]
+    pub title_page_title_size: f64,
+    #[serde(rename = "titlePageAuthorFont")]
+    pub title_page_author_font: Option<String>,  // Autorenname
+    #[serde(rename = "titlePageAuthorSize")]
+    #[serde(default = "default_title_page_author_size")]
+    pub title_page_author_size: f64,
+    #[serde(rename = "titlePagePublisherFont")]
+    pub title_page_publisher_font: Option<String>,  // Verlag
+    #[serde(rename = "titlePagePublisherSize")]
+    #[serde(default = "default_title_page_publisher_size")]
+    pub title_page_publisher_size: f64,
+    
+    // Typography - Table of Contents
+    #[serde(rename = "tocFont")]
+    pub toc_font: Option<String>,
+    #[serde(rename = "tocFontSize")]
+    #[serde(default = "default_toc_font_size")]
+    pub toc_font_size: f64,
+    #[serde(rename = "tocTitleFont")]
+    pub toc_title_font: Option<String>,  // "Inhalt" heading
+    #[serde(rename = "tocTitleSize")]
+    #[serde(default = "default_toc_title_size")]
+    pub toc_title_size: f64,
     
     // Text alignment
     #[serde(rename = "textAlign")]
@@ -159,6 +202,13 @@ fn default_running_header_style() -> String { "author-title".to_string() }
 fn default_drop_cap_lines() -> u8 { 3 }
 fn default_toc_title() -> String { "Inhalt".to_string() }
 fn default_scene_break_style() -> String { "asterism".to_string() }
+fn default_header_font_size() -> f64 { 9.0 }
+fn default_page_number_font_size() -> f64 { 10.0 }
+fn default_title_page_title_size() -> f64 { 28.0 }
+fn default_title_page_author_size() -> f64 { 16.0 }
+fn default_title_page_publisher_size() -> f64 { 12.0 }
+fn default_toc_font_size() -> f64 { 11.0 }
+fn default_toc_title_size() -> f64 { 16.0 }
 
 impl Default for LayoutSettings {
     fn default() -> Self {
@@ -173,12 +223,30 @@ impl Default for LayoutSettings {
             margin_inner: 20.0,
             margin_outer: 15.0,
             mirror_margins: true,
-            // Typography
+            // Typography - Body Text
             font_family: "Crimson Pro".to_string(),
             font_size: 11.0,
             line_height: 1.4,
             paragraph_spacing: 0.0,
             first_line_indent: 5.0,
+            // Typography - Headers & Running Headers
+            header_font: None,
+            header_font_size: 9.0,
+            // Typography - Page Numbers
+            page_number_font: None,
+            page_number_font_size: 10.0,
+            // Typography - Title Page
+            title_page_title_font: None,
+            title_page_title_size: 28.0,
+            title_page_author_font: None,
+            title_page_author_size: 16.0,
+            title_page_publisher_font: None,
+            title_page_publisher_size: 12.0,
+            // Typography - Table of Contents
+            toc_font: None,
+            toc_font_size: 11.0,
+            toc_title_font: None,
+            toc_title_size: 16.0,
             // Text alignment
             text_align: "justify".to_string(),
             // Widow/Orphan control
@@ -343,44 +411,57 @@ pub fn generate_typst_template(settings: &LayoutSettings, title: &str, author: &
     let scene_break = get_scene_break_symbol(settings);
     let scene_break_image = settings.scene_break_image_path.as_ref();
     
+    // Typography settings for headers and page numbers
+    let header_font_setting = settings.header_font.as_ref()
+        .map(|f| format!(", font: \"{}\"", f))
+        .unwrap_or_default();
+    let header_size = settings.header_font_size;
+    let page_number_font_setting = settings.page_number_font.as_ref()
+        .map(|f| format!(", font: \"{}\"", f))
+        .unwrap_or_default();
+    let page_number_size = settings.page_number_font_size;
+    
     // Running header logic
     let header_code = match settings.running_header_style.as_str() {
         "author-title" => format!(r#"
     if counter(page).get().first() > 4 {{
       if calc.odd(counter(page).get().first()) {{
-        align(right)[#text(size: 9pt, style: "italic")[{}]]
+        align(right)[#text(size: {header_size}pt, style: "italic"{header_font})[{title}]]
       }} else {{
-        align(left)[#text(size: 9pt, style: "italic")[{}]]
+        align(left)[#text(size: {header_size}pt, style: "italic"{header_font})[{author}]]
       }}
-    }}"#, title, author),
-        "title-chapter" => r#"
-    if counter(page).get().first() > 4 {
+    }}"#, title = title, author = author, header_size = header_size, header_font = header_font_setting),
+        "title-chapter" => format!(r#"
+    if counter(page).get().first() > 4 {{
       let current-chapter = query(heading.where(level: 1).before(here()))
-      if current-chapter.len() > 0 {
-        if calc.odd(counter(page).get().first()) {
-          align(right)[#text(size: 9pt, style: "italic")[#current-chapter.last().body]]
-        } else {
-          align(left)[#text(size: 9pt, style: "italic")[#current-chapter.last().body]]
-        }
-      }
-    }"#.to_string(),
-        "chapter-only" => r#"
-    if counter(page).get().first() > 4 {
+      if current-chapter.len() > 0 {{
+        if calc.odd(counter(page).get().first()) {{
+          align(right)[#text(size: {header_size}pt, style: "italic"{header_font})[#current-chapter.last().body]]
+        }} else {{
+          align(left)[#text(size: {header_size}pt, style: "italic"{header_font})[#current-chapter.last().body]]
+        }}
+      }}
+    }}"#, header_size = header_size, header_font = header_font_setting),
+        "chapter-only" => format!(r#"
+    if counter(page).get().first() > 4 {{
       let current-chapter = query(heading.where(level: 1).before(here()))
-      if current-chapter.len() > 0 {
-        align(center)[#text(size: 9pt, style: "italic")[#current-chapter.last().body]]
-      }
-    }"#.to_string(),
+      if current-chapter.len() > 0 {{
+        align(center)[#text(size: {header_size}pt, style: "italic"{header_font})[#current-chapter.last().body]]
+      }}
+    }}"#, header_size = header_size, header_font = header_font_setting),
         _ => "[]".to_string(),
     };
     
     // Footer with page numbers
     let footer_code = if settings.show_page_numbers {
         match settings.page_number_position.as_str() {
-            "bottom-center" => r#"align(center)[#counter(page).display()]"#.to_string(),
-            "bottom-outside" => r#"if calc.odd(counter(page).get().first()) { align(right)[#counter(page).display()] } else { align(left)[#counter(page).display()] }"#.to_string(),
+            "bottom-center" => format!(r#"align(center)[#text(size: {size}pt{font})[#counter(page).display()]]"#, 
+                size = page_number_size, font = page_number_font_setting),
+            "bottom-outside" => format!(r#"if calc.odd(counter(page).get().first()) {{ align(right)[#text(size: {size}pt{font})[#counter(page).display()]] }} else {{ align(left)[#text(size: {size}pt{font})[#counter(page).display()]] }}"#, 
+                size = page_number_size, font = page_number_font_setting),
             "top-outside" => "[]".to_string(), // Handled in header
-            _ => r#"align(center)[#counter(page).display()]"#.to_string(),
+            _ => format!(r#"align(center)[#text(size: {size}pt{font})[#counter(page).display()]]"#, 
+                size = page_number_size, font = page_number_font_setting),
         }
     } else {
         "[]".to_string()
@@ -583,37 +664,57 @@ pub fn manuscript_to_typst(
     
     // 1. Half-title page (Schmutztitel) - just the title, no author
     if settings.include_half_title {
+        let half_title_font = settings.title_page_title_font.as_ref()
+            .or(settings.chapter_title_font.as_ref())
+            .map(|f| format!(", font: \"{}\"", f))
+            .unwrap_or_default();
         content.push_str(&format!(r#"
 // Schmutztitel (Half-Title)
 #set page(header: none, footer: none)
 #align(center + horizon)[
-  #text(size: 18pt, weight: "medium")[{title}]
+  #text(size: 18pt, weight: "medium"{half_title_font})[{title}]
 ]
 #pagebreak()
 #pagebreak() // Verso blank
 
-"#, title = title));
+"#, title = title, half_title_font = half_title_font));
     }
     
     // 2. Title page (Haupttitel) - full title with author
     if settings.include_title_page {
+        let title_font = settings.title_page_title_font.as_ref()
+            .or(settings.chapter_title_font.as_ref())
+            .map(|f| format!(", font: \"{}\"", f))
+            .unwrap_or_default();
+        let title_size = settings.title_page_title_size;
+        let author_font = settings.title_page_author_font.as_ref()
+            .map(|f| format!(", font: \"{}\"", f))
+            .unwrap_or_default();
+        let author_size = settings.title_page_author_size;
+        let publisher_font = settings.title_page_publisher_font.as_ref()
+            .map(|f| format!(", font: \"{}\"", f))
+            .unwrap_or_default();
+        let publisher_size = settings.title_page_publisher_size;
         content.push_str(&format!(r#"
 // Haupttitel (Title Page)
 #set page(header: none, footer: none)
 #align(center + horizon)[
   #v(3em)
-  #text(size: 28pt, weight: "bold", tracking: 0.05em)[
+  #text(size: {title_size}pt, weight: "bold", tracking: 0.05em{title_font})[
     #upper[{title}]
   ]
   #v(4em)
-  #text(size: 16pt, style: "italic")[{author}]
+  #text(size: {author_size}pt, style: "italic"{author_font})[{author}]
     {title_logo_block}
   #v(1fr)
-  #text(size: 10pt)[Featherworks Author]
+  #text(size: {publisher_size}pt{publisher_font})[Featherworks Author]
 ]
 #pagebreak()
 
-"#, title = title, author = author));
+"#, title = title, author = author, title_logo_block = title_logo_block,
+   title_size = title_size, title_font = title_font,
+   author_size = author_size, author_font = author_font,
+   publisher_size = publisher_size, publisher_font = publisher_font));
     }
     
     // 3. Copyright page (Impressum)
@@ -677,25 +778,42 @@ pub fn manuscript_to_typst(
     
     // 6. Table of Contents (Inhaltsverzeichnis)
     if settings.include_toc {
+        let toc_title_font = settings.toc_title_font.as_ref()
+            .or(settings.chapter_title_font.as_ref())
+            .map(|f| format!(", font: \"{}\"", f))
+            .unwrap_or_default();
+        let toc_title_size = settings.toc_title_size;
+        let toc_font = settings.toc_font.as_ref()
+            .map(|f| format!("font: \"{}\", ", f))
+            .unwrap_or_default();
+        let toc_font_size = settings.toc_font_size;
         content.push_str(&format!(r#"
 // Inhaltsverzeichnis (Table of Contents)
 #set page(header: none, footer: none)
 #align(center)[
-  #text(size: 16pt, weight: "bold")[{toc_title}]
+  #text(size: {toc_title_size}pt, weight: "bold"{toc_title_font})[{toc_title}]
 ]
 #v(2em)
 
 #set par(first-line-indent: 0pt)
+#set text({toc_font}size: {toc_font_size}pt)
 #outline(
   title: none,
   depth: {toc_depth},
   indent: 1.5em,
 )
+#set text(font: "{body_font}", size: {body_font_size}pt)
 #pagebreak(to: "odd")
 
 "#, 
             toc_title = settings.toc_title,
-            toc_depth = if settings.toc_include_scenes { 2 } else { 1 }
+            toc_title_font = toc_title_font,
+            toc_title_size = toc_title_size,
+            toc_font = toc_font,
+            toc_font_size = toc_font_size,
+            toc_depth = if settings.toc_include_scenes { 2 } else { 1 },
+            body_font = settings.font_family,
+            body_font_size = settings.font_size,
         ));
     }
     
@@ -1381,35 +1499,22 @@ pub fn export_to_indesign_xml(
       <scene number="{}">
 "#, scene_idx + 1));
 
-            // Smart paragraph detection:
-            // 1. First try splitting by double newlines (\n\n)
-            // 2. If that results in only 1 paragraph, split by single newlines
-            // 3. Handle scene breaks (-----, ***, etc.) inline
-            
-            let raw_paragraphs: Vec<&str> = scene.content.split("\n\n").collect();
-            
-            let paragraphs: Vec<String> = if raw_paragraphs.len() <= 1 {
-                // No double newlines found - split by single newlines instead
-                scene.content
-                    .split('\n')
-                    .map(|p| p.trim().to_string())
-                    .filter(|p| !p.is_empty())
-                    .collect()
-            } else {
-                // Double newlines found - use those as paragraph separators
-                raw_paragraphs
-                    .iter()
-                    .map(|p| p.trim().to_string())
-                    .filter(|p| !p.is_empty())
-                    .collect()
-            };
+            // SIMPLE APPROACH: Always split on single newlines
+            // This handles all cases: \n, \r\n, and mixed content
+            let paragraphs: Vec<&str> = scene.content
+                .split('\n')
+                .map(|p| p.trim())
+                .filter(|p| !p.is_empty())
+                .collect();
 
             let mut prev_was_dialogue = false;
             let mut is_first_para = true;
 
             for para in paragraphs.iter() {
+                let trimmed = para.trim();
+                
                 // Check if this is a scene break marker in the text
-                if scene_break_re.is_match(para) {
+                if scene_break_re.is_match(trimmed) {
                     xml.push_str(r#"        <scene-break aid:pstyle="SceneBreak">⁂</scene-break>
 "#);
                     is_first_para = true; // Next paragraph should be BodyTextFirst
@@ -1418,7 +1523,7 @@ pub fn export_to_indesign_xml(
                 }
 
                 // Check if paragraph is dialogue
-                let is_dialogue = is_dialogue_paragraph(para);
+                let is_dialogue = is_dialogue_paragraph(trimmed);
                 
                 // Determine paragraph style
                 let para_style = if is_dialogue {
@@ -1433,9 +1538,12 @@ pub fn export_to_indesign_xml(
                     "BodyText"
                 };
                 
+                // Determine tag name based on content type
+                let tag_name = if is_dialogue { "dialogue" } else { "para" };
+                
                 // Process inline formatting
                 let formatted_content = process_inline_formatting(
-                    &xml_escape(para),
+                    &xml_escape(trimmed),
                     &bold_italic_re,
                     &bold_re,
                     &italic_re,
@@ -1443,10 +1551,12 @@ pub fn export_to_indesign_xml(
                 );
                 
                 xml.push_str(&format!(
-                    r#"        <para aid:pstyle="{}">{}</para>
+                    r#"        <{} aid:pstyle="{}">{}</{}>
 "#, 
+                    tag_name,
                     para_style,
-                    formatted_content
+                    formatted_content,
+                    tag_name
                 ));
                 
                 prev_was_dialogue = is_dialogue;

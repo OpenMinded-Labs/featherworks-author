@@ -2097,6 +2097,312 @@ async fn start_ai_chat(req: StartAiChatRequest, app: tauri::AppHandle) -> Result
     stream::start_session(&app, req.prompt)
 }
 
+// --- Auto-Paragraph Command (ALWAYS uses local LLM, never API) ---
+#[derive(serde::Deserialize)]
+struct AutoParagraphRequest {
+    #[serde(rename = "sceneContent")]
+    scene_content: String,
+    #[serde(rename = "useHeuristic")]
+    use_heuristic: Option<bool>,  // Force heuristic mode (no AI)
+}
+
+#[derive(serde::Serialize)]
+struct AutoParagraphResult {
+    #[serde(rename = "originalText")]
+    original_text: String,
+    #[serde(rename = "suggestedText")]
+    suggested_text: String,
+    #[serde(rename = "changeCount")]
+    change_count: usize,
+    success: bool,
+    error: Option<String>,
+    #[serde(rename = "usedHeuristic")]
+    used_heuristic: bool,  // Whether heuristic was used instead of AI
+}
+
+/// Check if the local AI model is available and ready
+#[tauri::command]
+fn check_ai_available() -> bool {
+    ai::is_local_llm_ready()
+}
+
+#[tauri::command]
+fn auto_paragraph_scene(req: AutoParagraphRequest) -> Result<AutoParagraphResult, String> {
+    let original = req.scene_content.clone();
+    let force_heuristic = req.use_heuristic.unwrap_or(false);
+    
+    // Check if local LLM is ready (unless heuristic is forced)
+    let ai_available = if force_heuristic {
+        false
+    } else {
+        // Use the new function that checks the actual loader state
+        ai::is_local_llm_ready()
+    };
+    
+    log::info!("[auto-paragraph] force_heuristic={}, ai_available={}", force_heuristic, ai_available);
+    
+    // Use heuristic if AI not available or forced
+    if !ai_available {
+        log::info!("[auto-paragraph] Using heuristic mode (AI not available or forced)");
+        return Ok(auto_paragraph_heuristic(&original));
+    }
+    
+    // AI-based analysis
+    log::info!("[auto-paragraph] Using AI mode");
+    auto_paragraph_with_ai(&original)
+}
+
+/// Heuristic-based paragraph detection (no AI required)
+fn auto_paragraph_heuristic(text: &str) -> AutoParagraphResult {
+    // First, normalize existing paragraphs - preserve them but don't duplicate
+    // Split by existing paragraph breaks (double newlines)
+    let existing_paragraphs: Vec<&str> = text.split("\n\n")
+        .map(|p| p.trim())
+        .filter(|p| !p.is_empty())
+        .collect();
+    
+    // If there are already multiple paragraphs, analyze each one separately
+    // to avoid creating double breaks
+    let mut result_paragraphs: Vec<String> = Vec::new();
+    let mut total_new_breaks = 0;
+    
+    for para_text in &existing_paragraphs {
+        let (processed, new_breaks) = process_paragraph_heuristic(para_text);
+        result_paragraphs.push(processed);
+        total_new_breaks += new_breaks;
+    }
+    
+    let suggested = result_paragraphs.join("\n\n");
+    
+    log::info!("[auto-paragraph/heuristic] Suggesting {} new paragraphs (existing: {})", 
+               total_new_breaks, existing_paragraphs.len().saturating_sub(1));
+    
+    AutoParagraphResult {
+        original_text: text.to_string(),
+        suggested_text: suggested,
+        change_count: total_new_breaks,
+        success: true,
+        error: None,
+        used_heuristic: true,
+    }
+}
+
+/// Process a single paragraph and return (processed text, number of new breaks)
+fn process_paragraph_heuristic(text: &str) -> (String, usize) {
+    let mut paragraph_positions: Vec<usize> = Vec::new();
+    
+    // Split into sentences
+    let sentences: Vec<&str> = text
+        .split_inclusive(|c| c == '.' || c == '!' || c == '?' || c == '"' || c == '»')
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+    
+    if sentences.is_empty() || sentences.len() < 2 {
+        return (text.to_string(), 0);
+    }
+    
+    let mut chars_since_paragraph = 0;
+    let mut last_was_dialogue = false;
+    
+    for (i, sentence) in sentences.iter().enumerate() {
+        let trimmed = sentence.trim();
+        chars_since_paragraph += trimmed.len();
+        
+        // Rule 1: Dialogue detection - new speaker likely means new paragraph
+        let is_dialogue_start = trimmed.starts_with('"') || 
+                                trimmed.starts_with('„') || 
+                                trimmed.starts_with('»') ||
+                                trimmed.starts_with("\"");
+        let is_dialogue_end = trimmed.ends_with('"') || 
+                              trimmed.ends_with('"') || 
+                              trimmed.ends_with('«');
+        
+        // Rule 2: Speaker change in dialogue
+        if is_dialogue_start && last_was_dialogue && i > 0 {
+            paragraph_positions.push(i);
+            chars_since_paragraph = trimmed.len();
+        }
+        
+        // Rule 3: Time/place markers at sentence start
+        let time_place_markers = [
+            "später", "danach", "dann", "plötzlich", "währenddessen",
+            "am nächsten", "einige zeit", "stunden später", "tage später",
+            "draußen", "drinnen", "im", "in der", "in dem", "auf dem",
+            "zurück", "meanwhile", "later", "suddenly", "outside", "inside",
+            "the next", "hours later", "days later",
+        ];
+        let lower = trimmed.to_lowercase();
+        for marker in &time_place_markers {
+            if lower.starts_with(marker) && i > 0 && !paragraph_positions.contains(&i) {
+                paragraph_positions.push(i);
+                chars_since_paragraph = trimmed.len();
+                break;
+            }
+        }
+        
+        // Rule 4: Long passage without paragraph (>500 chars) - break at next sentence end
+        if chars_since_paragraph > 500 && i > 0 && !paragraph_positions.contains(&i) {
+            if !is_dialogue_start && !last_was_dialogue {
+                paragraph_positions.push(i);
+                chars_since_paragraph = trimmed.len();
+            }
+        }
+        
+        // Rule 5: Scene break indicators
+        let scene_break_markers = ["* * *", "***", "---", "—", "· · ·"];
+        for marker in &scene_break_markers {
+            if trimmed.contains(marker) && i > 0 && !paragraph_positions.contains(&i) {
+                paragraph_positions.push(i);
+                chars_since_paragraph = trimmed.len();
+                break;
+            }
+        }
+        
+        last_was_dialogue = is_dialogue_end || (is_dialogue_start && !is_dialogue_end);
+    }
+    
+    // Remove duplicates and sort
+    paragraph_positions.sort();
+    paragraph_positions.dedup();
+    
+    if paragraph_positions.is_empty() {
+        return (text.to_string(), 0);
+    }
+    
+    // Build new text with paragraphs inserted
+    let mut result_parts: Vec<String> = Vec::new();
+    for (i, sentence) in sentences.iter().enumerate() {
+        if paragraph_positions.contains(&i) && i > 0 {
+            result_parts.push("\n\n".to_string());
+        }
+        result_parts.push(sentence.to_string());
+    }
+    
+    (result_parts.join("").trim().to_string(), paragraph_positions.len())
+}
+
+/// AI-based paragraph detection using local LLM
+fn auto_paragraph_with_ai(text: &str) -> Result<AutoParagraphResult, String> {
+    // Prepare numbered sentences for the prompt
+    let sentences: Vec<&str> = text
+        .split_inclusive(|c| c == '.' || c == '!' || c == '?' || c == '"' || c == '»')
+        .filter(|s| !s.trim().is_empty())
+        .collect();
+    
+    if sentences.is_empty() {
+        return Ok(AutoParagraphResult {
+            original_text: text.to_string(),
+            suggested_text: text.to_string(),
+            change_count: 0,
+            success: true,
+            error: None,
+            used_heuristic: false,
+        });
+    }
+    
+    // Build numbered text for LLM
+    let numbered_text: String = sentences.iter().enumerate()
+        .map(|(i, s)| format!("[{}] {}", i + 1, s.trim()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    
+    let prompt = format!(r#"Du bist ein Lektor. Analysiere den folgenden Text und bestimme, wo Absätze gesetzt werden sollten.
+
+Regeln für neue Absätze:
+- Bei Sprecherwechsel im Dialog
+- Bei Themenwechsel oder neuer Idee
+- Bei Zeitsprüngen
+- Bei Ortswechsel
+- Bei Perspektivwechsel
+- Nach längeren Beschreibungen vor neuer Handlung
+
+Antworte NUR mit einer JSON-Liste der Satznummern, NACH denen ein Absatz kommen soll.
+Beispiel: [3, 7, 12]
+Wenn keine Absätze nötig sind, antworte: []
+
+Text:
+{}
+
+Absätze nach Sätzen:"#, numbered_text);
+
+    // FORCE local LLM - use generate_tokens_for_prompt directly
+    log::info!("[auto-paragraph/ai] Starting analysis with {} sentences", sentences.len());
+    let tokens = ai::generate_tokens_for_prompt(&prompt, 256);
+    
+    // Join tokens to get response
+    let response: String = tokens.join("");
+    log::info!("[auto-paragraph/ai] LLM response: {}", response);
+    
+    // Check for LLM errors - fall back to heuristic
+    if response.starts_with("[LLM_ERROR:") {
+        log::warn!("[auto-paragraph/ai] LLM error, falling back to heuristic");
+        return Ok(auto_paragraph_heuristic(text));
+    }
+    
+    // Parse JSON array from response
+    let paragraph_positions: Vec<usize> = parse_paragraph_positions(&response);
+    
+    if paragraph_positions.is_empty() {
+        return Ok(AutoParagraphResult {
+            original_text: text.to_string(),
+            suggested_text: text.to_string(),
+            change_count: 0,
+            success: true,
+            error: None,
+            used_heuristic: false,
+        });
+    }
+    
+    // Build new text with paragraphs inserted
+    let mut result_parts: Vec<String> = Vec::new();
+    for (i, sentence) in sentences.iter().enumerate() {
+        result_parts.push(sentence.to_string());
+        if paragraph_positions.contains(&(i + 1)) {
+            result_parts.push("\n\n".to_string());
+        }
+    }
+    
+    let suggested = result_parts.join("").trim().to_string();
+    let change_count = paragraph_positions.len();
+    
+    log::info!("[auto-paragraph/ai] Suggesting {} new paragraphs", change_count);
+    
+    Ok(AutoParagraphResult {
+        original_text: text.to_string(),
+        suggested_text: suggested,
+        change_count,
+        success: true,
+        error: None,
+        used_heuristic: false,
+    })
+}
+
+/// Parse paragraph positions from LLM response (expects JSON array like [3, 7, 12])
+fn parse_paragraph_positions(response: &str) -> Vec<usize> {
+    // Try to find JSON array in response
+    let trimmed = response.trim();
+    
+    // Look for array pattern
+    if let Some(start) = trimmed.find('[') {
+        if let Some(end) = trimmed.rfind(']') {
+            let array_str = &trimmed[start..=end];
+            // Parse as JSON
+            if let Ok(positions) = serde_json::from_str::<Vec<usize>>(array_str) {
+                return positions;
+            }
+            // Try parsing with possible extra content
+            let clean: String = array_str.chars()
+                .filter(|c| c.is_numeric() || *c == ',' || *c == '[' || *c == ']')
+                .collect();
+            if let Ok(positions) = serde_json::from_str::<Vec<usize>>(&clean) {
+                return positions;
+            }
+        }
+    }
+    
+    Vec::new()
+}
+
 /// Set the active AI provider for streaming
 #[derive(serde::Deserialize)]
 struct SetActiveProviderRequest {
@@ -2666,6 +2972,34 @@ fn create_entity_type(req: CreateEntityTypeRequest, state: State<AppState>) -> R
         .map_err(|e| e.to_string())
 }
 
+#[derive(serde::Deserialize)]
+struct UpdateEntityTypeRequest {
+    type_id: String,
+    name: String,
+    name_plural: String,
+    icon: String,
+    default_color: String,
+    #[serde(default)]
+    schema_json: String,
+}
+
+#[tauri::command]
+fn update_entity_type(req: UpdateEntityTypeRequest, state: State<AppState>) -> Result<(), String> {
+    let guard = state.db.lock().unwrap();
+    let conn = guard.as_ref().ok_or("No project open")?;
+    let schema = if req.schema_json.is_empty() { "[]" } else { &req.schema_json };
+    database::update_entity_type(conn, &req.type_id, &req.name, &req.name_plural, &req.icon, &req.default_color, schema)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn update_entity_type_schema(type_id: String, schema_json: String, state: State<AppState>) -> Result<(), String> {
+    let guard = state.db.lock().unwrap();
+    let conn = guard.as_ref().ok_or("No project open")?;
+    database::update_entity_type_schema(conn, &type_id, &schema_json)
+        .map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 fn delete_entity_type(type_id: String, state: State<AppState>) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
@@ -2912,6 +3246,21 @@ fn remove_rag_document(id: String, state: State<AppState>) -> Result<(), String>
     
     // Then delete the document
     database::remove_rag_document(conn, &id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn clear_all_rag_data(state: State<AppState>) -> Result<(), String> {
+    let guard = state.db.lock().unwrap();
+    let conn = guard.as_ref().ok_or("No project open")?;
+    
+    // Delete all chunks
+    conn.execute("DELETE FROM rag_chunks", []).map_err(|e| e.to_string())?;
+    
+    // Delete all documents
+    conn.execute("DELETE FROM rag_documents", []).map_err(|e| e.to_string())?;
+    
+    log::info!("Cleared all RAG data");
+    Ok(())
 }
 
 // ============================================================================
@@ -3653,7 +4002,18 @@ fn export_project_docx(
         layout::ChapterContent {
             title: ch.title.clone(),
             scenes: scenes.into_iter().map(|s| {
-                let (content, _wc) = database::get_scene_content(conn, &s.id).unwrap_or_default();
+                // Try to get content from content_json first (preserves paragraphs)
+                let content = match database::get_scene_content_with_json(conn, &s.id) {
+                    Ok((Some(json), _, _)) => {
+                        // Parse JSON and extract plain text with newlines
+                        if let Ok(doc) = serde_json::from_str::<featherworks_author::domain::doc::Node>(&json) {
+                            featherworks_author::domain::doc::to_plain_text(&doc)
+                        } else {
+                            database::get_scene_content(conn, &s.id).map(|(c, _)| c).unwrap_or_default()
+                        }
+                    }
+                    _ => database::get_scene_content(conn, &s.id).map(|(c, _)| c).unwrap_or_default()
+                };
                 layout::SceneContent {
                     title: s.title,
                     content,
@@ -3685,7 +4045,18 @@ fn export_project_indesign_xml(
         layout::ChapterContent {
             title: ch.title.clone(),
             scenes: scenes.into_iter().map(|s| {
-                let (content, _wc) = database::get_scene_content(conn, &s.id).unwrap_or_default();
+                // Try to get content from content_json first (preserves paragraphs)
+                let content = match database::get_scene_content_with_json(conn, &s.id) {
+                    Ok((Some(json), _, _)) => {
+                        // Parse JSON and extract plain text with newlines
+                        if let Ok(doc) = serde_json::from_str::<featherworks_author::domain::doc::Node>(&json) {
+                            featherworks_author::domain::doc::to_plain_text(&doc)
+                        } else {
+                            database::get_scene_content(conn, &s.id).map(|(c, _)| c).unwrap_or_default()
+                        }
+                    }
+                    _ => database::get_scene_content(conn, &s.id).map(|(c, _)| c).unwrap_or_default()
+                };
                 layout::SceneContent {
                     title: s.title,
                     content,
@@ -3874,6 +4245,7 @@ fn build_menu() -> Menu {
     let send_feedback = CustomMenuItem::new("send_feedback", if is_german { "Feedback senden…" } else { "Send Feedback…" });
     let visit_website = CustomMenuItem::new("visit_website", if is_german { "Webseite besuchen" } else { "Visit Website" });
     let view_logs = CustomMenuItem::new("view_logs", if is_german { "Log-Dateien öffnen" } else { "Open Log Files" });
+    let about_app = CustomMenuItem::new("about_app", if is_german { "Über FeatherWorks Author" } else { "About FeatherWorks Author" });
     
     let help_menu = Submenu::new(
         if is_german { "Hilfe" } else { "Help" },
@@ -3882,7 +4254,9 @@ fn build_menu() -> Menu {
             .add_item(send_feedback)
             .add_native_item(tauri::MenuItem::Separator)
             .add_item(visit_website)
-            .add_item(view_logs),
+            .add_item(view_logs)
+            .add_native_item(tauri::MenuItem::Separator)
+            .add_item(about_app),
     );
 
     Menu::new()
@@ -3997,6 +4371,7 @@ pub fn run() {
                         let _ = open::that(log_dir);
                     }
                 },
+                "about_app" => window.emit("menu_about", ()).unwrap(),
                 // Language
                 "set_lang_de" => window.emit("request-language-change", "de").unwrap(),
                 "set_lang_en" => window.emit("request-language-change", "en").unwrap(),
@@ -4038,6 +4413,8 @@ pub fn run() {
             , cancel_ai_chat
             , build_fontaine_context
             , set_active_ai_provider
+            , auto_paragraph_scene
+            , check_ai_available
             , set_ai_model
             , get_ai_model
             , list_ai_models
@@ -4081,6 +4458,8 @@ pub fn run() {
             // Entity System
             , list_entity_types
             , create_entity_type
+            , update_entity_type
+            , update_entity_type_schema
             , delete_entity_type
             , list_entities
             , get_entity
@@ -4102,6 +4481,7 @@ pub fn run() {
             , list_rag_documents
             , import_rag_document
             , remove_rag_document
+            , clear_all_rag_data
             // Plot System
             , list_subplots
             , create_subplot

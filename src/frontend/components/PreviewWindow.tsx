@@ -57,13 +57,31 @@ interface LayoutSettings {
   marginInner: number;
   marginOuter: number;
   mirrorMargins?: boolean;
-  // Typography
+  // Typography - Body Text
   fontFamily: string;
   fontSize: number;
   lineHeight: number;
   paragraphSpacing: number;
   firstLineIndent: number;
   textAlign?: string;
+  // Typography - Headers & Running Headers
+  headerFont?: string;
+  headerFontSize?: number;
+  // Typography - Page Numbers
+  pageNumberFont?: string;
+  pageNumberFontSize?: number;
+  // Typography - Title Page
+  titlePageTitleFont?: string;
+  titlePageTitleSize?: number;
+  titlePageAuthorFont?: string;
+  titlePageAuthorSize?: number;
+  titlePagePublisherFont?: string;
+  titlePagePublisherSize?: number;
+  // Typography - Table of Contents
+  tocFont?: string;
+  tocFontSize?: number;
+  tocTitleFont?: string;
+  tocTitleSize?: number;
   // Widow/Orphan control
   preventWidows?: boolean;
   preventOrphans?: boolean;

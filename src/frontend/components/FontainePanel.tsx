@@ -303,13 +303,7 @@ export const FontainePanel: React.FC<FontainePanelProps> = ({
       .catch(e => console.error('Failed to load user profile', e));
   }, []);
 
-  // Listen for native menu "Lokales Modell verwalten" event
-  useEffect(() => {
-    const unlisten = listen('menu_ai_local_model', () => {
-      setShowModelSettings(true);
-    });
-    return () => { unlisten.then(fn => fn()); };
-  }, []);
+  // NOTE: 'menu_ai_local_model' event is now handled by LocalAiDialog in main.tsx
 
   // Chunked Entity-Extraction Events (Progress / Done / Error)
   useEffect(() => {
@@ -653,6 +647,100 @@ export const FontainePanel: React.FC<FontainePanelProps> = ({
     };
     checkAndLoad();
   }, []);
+
+  // Listen for "fontaine-analyze" events from context menu
+  // Sends an analysis request with a pre-built prompt for fast output
+  useEffect(() => {
+    const handleFontaineAnalyze = async (e: Event) => {
+      const detail = (e as CustomEvent).detail as { text: string; from: number; to: number } | undefined;
+      if (!detail?.text) return;
+      
+      const { text } = detail;
+      const lang = i18n.language;
+      const isGerman = lang.startsWith('de');
+      
+      // Add user message showing what's being analyzed
+      const displayText = text.length > 100 ? text.slice(0, 97) + '...' : text;
+      setMessages(prev => [...prev, {
+        id: crypto.randomUUID(),
+        role: 'user',
+        content: isGerman 
+          ? `Analysiere diese Passage: „${displayText}"`
+          : `Analyze this passage: "${displayText}"`,
+        timestamp: new Date()
+      }]);
+      
+      // Build a focused analysis prompt (short for fast response)
+      const analysisPrompt = isGerman 
+        ? `<|system|>
+Du bist ein Schreibassistent. Gib KURZE, prägnante Analyse (max 3-4 Punkte).
+<|end|>
+<|user|>
+Analysiere diese Passage kurz:
+"""
+${text.substring(0, 1500)}
+"""
+
+Gib mir:
+1. Stimmung/Ton (1 Satz)
+2. Stilistische Stärke (1 Satz)
+3. Verbesserungsvorschlag (1 Satz)
+<|end|>
+<|assistant|>
+**Kurzanalyse:**
+`
+        : `<|system|>
+You are a writing assistant. Give SHORT, concise analysis (max 3-4 points).
+<|end|>
+<|user|>
+Briefly analyze this passage:
+"""
+${text.substring(0, 1500)}
+"""
+
+Give me:
+1. Mood/tone (1 sentence)
+2. Stylistic strength (1 sentence)  
+3. Improvement suggestion (1 sentence)
+<|end|>
+<|assistant|>
+**Quick Analysis:**
+`;
+
+      setIsAnalyzing(true);
+      
+      try {
+        // Start AI chat with pre-built prompt (uses existing streaming infrastructure)
+        const id = await invoke<string>('start_ai_chat', { 
+          req: { 
+            prompt: analysisPrompt,
+            sceneId: activeSceneId,
+            mode: 'chat'
+          } 
+        });
+        setCurrentId(id);
+        setMessages(prev => [...prev, { 
+          id, 
+          role: 'assistant', 
+          content: '', 
+          streaming: true, 
+          timestamp: new Date() 
+        }]);
+      } catch (err) {
+        console.error('Fontaine analysis failed:', err);
+        setMessages(prev => [...prev, {
+          id: crypto.randomUUID(),
+          role: 'system',
+          content: isGerman ? '⚠️ Analyse fehlgeschlagen' : '⚠️ Analysis failed',
+          timestamp: new Date()
+        }]);
+        setIsAnalyzing(false);
+      }
+    };
+    
+    window.addEventListener('fontaine-analyze', handleFontaineAnalyze);
+    return () => window.removeEventListener('fontaine-analyze', handleFontaineAnalyze);
+  }, [i18n.language, activeSceneId]);
 
   // Speichert Entities (Upsert) und erstellt eine Ergebnisnachricht
   const saveEntities = async (entities: ExtractedEntity[]) => {
@@ -1111,6 +1199,8 @@ export const FontainePanel: React.FC<FontainePanelProps> = ({
     setProviderSettings(next);
     try {
       await invoke('save_ai_provider_settings', { settings: next });
+      // Notify main.tsx about AI status change for ToolRail graying
+      window.dispatchEvent(new CustomEvent('ai-status-changed', { detail: { enabled: value } }));
       setMessages(prev => [...prev, {
         id: crypto.randomUUID(),
         role: 'system',

@@ -38,6 +38,21 @@ interface LayoutSettings {
   chapterStartPage: string;
   chapterTitleFont?: string;
   chapterTitleSize: number;
+  // Extended Typography
+  headerFont?: string;
+  headerFontSize?: number;
+  pageNumberFont?: string;
+  pageNumberFontSize?: number;
+  titlePageTitleFont?: string;
+  titlePageTitleSize?: number;
+  titlePageAuthorFont?: string;
+  titlePageAuthorSize?: number;
+  titlePagePublisherFont?: string;
+  titlePagePublisherSize?: number;
+  tocFont?: string;
+  tocFontSize?: number;
+  tocTitleFont?: string;
+  tocTitleSize?: number;
   dropCapEnabled: boolean;
   dropCapLines: number;
   includeHalfTitle: boolean;
@@ -241,6 +256,21 @@ export const LayoutEditor: React.FC<LayoutEditorProps> = ({
     chapterStartPage: 'right',
     chapterTitleFont: 'Crimson Pro',
     chapterTitleSize: 18,
+    // Extended Typography
+    headerFont: 'Crimson Pro',
+    headerFontSize: 9,
+    pageNumberFont: 'Crimson Pro',
+    pageNumberFontSize: 10,
+    titlePageTitleFont: 'Crimson Pro',
+    titlePageTitleSize: 28,
+    titlePageAuthorFont: 'Crimson Pro',
+    titlePageAuthorSize: 16,
+    titlePagePublisherFont: 'Crimson Pro',
+    titlePagePublisherSize: 12,
+    tocFont: 'Crimson Pro',
+    tocFontSize: 11,
+    tocTitleFont: 'Crimson Pro',
+    tocTitleSize: 18,
     dropCapEnabled: false,
     dropCapLines: 3,
     includeHalfTitle: true,
@@ -477,7 +507,7 @@ export const LayoutEditor: React.FC<LayoutEditorProps> = ({
           >
             <div className="preview-dialog-header">
               <span className="preview-dialog-icon">👁️</span>
-              <h3>Vorschau wählen</h3>
+              <h3>Vorschau & Export</h3>
             </div>
             <div className="preview-dialog-options">
               <button
@@ -532,8 +562,8 @@ export const LayoutEditor: React.FC<LayoutEditorProps> = ({
               >
                 <span className="option-icon">📄</span>
                 <div className="option-content">
-                  <span className="option-title">PDF-Vorschau</span>
-                  <span className="option-desc">Exakte Druckansicht</span>
+                  <span className="option-title">PDF-Vorschau & Multiformat-Export</span>
+                  <span className="option-desc">Exakte Druckansicht + Export als PDF, EPUB, DOCX, XML</span>
                 </div>
               </button>
             </div>
@@ -555,9 +585,9 @@ export const LayoutEditor: React.FC<LayoutEditorProps> = ({
             ref={previewBtnRef}
             className="btn btn-preview"
             onClick={() => setShowPreviewDropdown(true)}
-            title="Vorschau öffnen"
+            title="Vorschau & Export öffnen"
           >
-            👁️ Vorschau
+            👁️ Vorschau & Export
           </button>
           <button
             className="btn btn-primary"
@@ -919,6 +949,17 @@ export const LayoutEditor: React.FC<LayoutEditorProps> = ({
                   </select>
                 </label>
                 <label>
+                  Kapitelüberschrift Schrift
+                  <select
+                    value={settings.chapterTitleFont || settings.fontFamily}
+                    onChange={e => updateSetting('chapterTitleFont', e.target.value)}
+                  >
+                    {FONT_FAMILIES.map(font => (
+                      <option key={font} value={font}>{font}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
                   Kapitelüberschrift (pt)
                   <input
                     type="number"
@@ -1013,7 +1054,31 @@ export const LayoutEditor: React.FC<LayoutEditorProps> = ({
                   </select>
                 </label>
                 <label>
-                  Seitenzahlen
+                  Kolumnentitel Schrift
+                  <select
+                    value={settings.headerFont || settings.fontFamily}
+                    onChange={e => updateSetting('headerFont', e.target.value)}
+                  >
+                    {FONT_FAMILIES.map(font => (
+                      <option key={font} value={font}>{font}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Kolumnentitel Größe (pt)
+                  <input
+                    type="number"
+                    min={6}
+                    max={14}
+                    step={0.5}
+                    value={settings.headerFontSize || 9}
+                    onChange={e => updateSetting('headerFontSize', Number(e.target.value))}
+                  />
+                </label>
+              </div>
+              <div className="form-row">
+                <label>
+                  Seitenzahlen Position
                   <select
                     value={settings.pageNumberPosition}
                     onChange={e => updateSetting('pageNumberPosition', e.target.value)}
@@ -1022,6 +1087,28 @@ export const LayoutEditor: React.FC<LayoutEditorProps> = ({
                     <option value="bottom-outside">Unten außen</option>
                     <option value="top-outside">Oben außen</option>
                   </select>
+                </label>
+                <label>
+                  Seitenzahlen Schrift
+                  <select
+                    value={settings.pageNumberFont || settings.fontFamily}
+                    onChange={e => updateSetting('pageNumberFont', e.target.value)}
+                  >
+                    {FONT_FAMILIES.map(font => (
+                      <option key={font} value={font}>{font}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
+                  Seitenzahlen Größe (pt)
+                  <input
+                    type="number"
+                    min={6}
+                    max={14}
+                    step={0.5}
+                    value={settings.pageNumberFontSize || 10}
+                    onChange={e => updateSetting('pageNumberFontSize', Number(e.target.value))}
+                  />
                 </label>
               </div>
               <div className="checkbox-grid">
@@ -1090,6 +1177,81 @@ export const LayoutEditor: React.FC<LayoutEditorProps> = ({
               </div>
             </div>
 
+            {settings.includeTitlePage && (
+              <div className="section">
+                <h3>Titelseiten-Typografie</h3>
+                <div className="form-row">
+                  <label>
+                    Buchtitel Schrift
+                    <select
+                      value={settings.titlePageTitleFont || settings.chapterTitleFont || settings.fontFamily}
+                      onChange={e => updateSetting('titlePageTitleFont', e.target.value)}
+                    >
+                      {FONT_FAMILIES.map(font => (
+                        <option key={font} value={font}>{font}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Buchtitel Größe (pt)
+                    <input
+                      type="number"
+                      min={16}
+                      max={48}
+                      value={settings.titlePageTitleSize || 28}
+                      onChange={e => updateSetting('titlePageTitleSize', Number(e.target.value))}
+                    />
+                  </label>
+                </div>
+                <div className="form-row">
+                  <label>
+                    Autor Schrift
+                    <select
+                      value={settings.titlePageAuthorFont || settings.fontFamily}
+                      onChange={e => updateSetting('titlePageAuthorFont', e.target.value)}
+                    >
+                      {FONT_FAMILIES.map(font => (
+                        <option key={font} value={font}>{font}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Autor Größe (pt)
+                    <input
+                      type="number"
+                      min={10}
+                      max={28}
+                      value={settings.titlePageAuthorSize || 16}
+                      onChange={e => updateSetting('titlePageAuthorSize', Number(e.target.value))}
+                    />
+                  </label>
+                </div>
+                <div className="form-row">
+                  <label>
+                    Verlag Schrift
+                    <select
+                      value={settings.titlePagePublisherFont || settings.fontFamily}
+                      onChange={e => updateSetting('titlePagePublisherFont', e.target.value)}
+                    >
+                      {FONT_FAMILIES.map(font => (
+                        <option key={font} value={font}>{font}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Verlag Größe (pt)
+                    <input
+                      type="number"
+                      min={8}
+                      max={20}
+                      value={settings.titlePagePublisherSize || 12}
+                      onChange={e => updateSetting('titlePagePublisherSize', Number(e.target.value))}
+                    />
+                  </label>
+                </div>
+              </div>
+            )}
+
             {settings.includeToc && (
               <div className="section">
                 <h3>Inhaltsverzeichnis</h3>
@@ -1100,6 +1262,51 @@ export const LayoutEditor: React.FC<LayoutEditorProps> = ({
                       type="text"
                       value={settings.tocTitle}
                       onChange={e => updateSetting('tocTitle', e.target.value)}
+                    />
+                  </label>
+                  <label>
+                    Überschrift Schrift
+                    <select
+                      value={settings.tocTitleFont || settings.chapterTitleFont || settings.fontFamily}
+                      onChange={e => updateSetting('tocTitleFont', e.target.value)}
+                    >
+                      {FONT_FAMILIES.map(font => (
+                        <option key={font} value={font}>{font}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Überschrift Größe (pt)
+                    <input
+                      type="number"
+                      min={12}
+                      max={36}
+                      value={settings.tocTitleSize || settings.chapterTitleSize || 18}
+                      onChange={e => updateSetting('tocTitleSize', Number(e.target.value))}
+                    />
+                  </label>
+                </div>
+                <div className="form-row">
+                  <label>
+                    Einträge Schrift
+                    <select
+                      value={settings.tocFont || settings.fontFamily}
+                      onChange={e => updateSetting('tocFont', e.target.value)}
+                    >
+                      {FONT_FAMILIES.map(font => (
+                        <option key={font} value={font}>{font}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Einträge Größe (pt)
+                    <input
+                      type="number"
+                      min={8}
+                      max={16}
+                      step={0.5}
+                      value={settings.tocFontSize || settings.fontSize || 11}
+                      onChange={e => updateSetting('tocFontSize', Number(e.target.value))}
                     />
                   </label>
                 </div>

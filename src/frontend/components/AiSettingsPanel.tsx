@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { invoke } from '@tauri-apps/api/tauri';
+import { emit } from '@tauri-apps/api/event';
 
 // Types matching Rust backend
 interface AiSettings {
@@ -91,9 +92,10 @@ export const AiSettingsPanel: React.FC<AiSettingsPanelProps> = ({ onClose }) => 
           const progress = await invoke<DownloadProgress | null>('get_download_progress');
           setDownloadProgress(progress);
           
-          // If complete, refresh model availability
+          // If complete, refresh model availability and notify other components
           if (progress?.status === 'complete') {
             await checkModelAvailability();
+            emit('ai-settings-changed'); // Notify ToolRail to update AI availability
           }
         } catch (e) {
           console.error('Failed to get download progress:', e);

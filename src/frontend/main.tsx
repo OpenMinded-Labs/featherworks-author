@@ -73,6 +73,9 @@ import { PreviewWindow } from './components/PreviewWindow';
 import { LayoutPreview } from './components/LayoutPreview';
 import { PreviewSettingsSidebar } from './components/PreviewSettingsSidebar';
 import { ExportFormatDialog } from './components/ExportFormatDialog';
+import { AutoParagraphDialog } from './components/AutoParagraphDialog';
+import { AboutDialog } from './components/AboutDialog';
+import { LocalAiDialog } from './components/LocalAiDialog';
 
 // Small helper to render a progress bar without inline styles (width is applied via ref)
 const ProgressBar: React.FC<{ pct: number; title?: string }> = ({ pct, title }) => {
@@ -128,6 +131,9 @@ export interface EditorSettings {
     paragraph_spacing?: number;
     page_padding?: number;
     editor_language?: 'de' | 'en';  // Separate from UI language
+    typewriter_mode?: boolean;  // Keep cursor vertically centered
+    typewriter_sound?: boolean;  // Typewriter key sounds
+    typewriter_volume?: number;  // Sound volume 0-100
 }
 
 type AppView = 'welcome' | 'editor' | 'library';
@@ -388,6 +394,8 @@ function App() {
     const [showExportModal, setShowExportModal] = useState(false);
     const [showImportModal, setShowImportModal] = useState(false);
     const [showBugReportModal, setShowBugReportModal] = useState(false);
+    const [showAboutDialog, setShowAboutDialog] = useState(false);
+    const [showLocalAiDialog, setShowLocalAiDialog] = useState(false);
     const [bugReportCategory, setBugReportCategory] = useState<'bug' | 'feedback'>('bug');
     const [exportPassword, setExportPassword] = useState('');
     const [exportPath, setExportPath] = useState('');
@@ -417,6 +425,9 @@ function App() {
     // Main content view mode: editor (write) or preview (view layout)
     const [mainViewMode, setMainViewMode] = useState<'editor' | 'preview-css' | 'preview-pdf'>('editor');
     const [showPreviewDropdown, setShowPreviewDropdown] = useState(false);
+    
+    // AI Provider settings - track globally for ToolRail graying
+    const [aiEnabled, setAiEnabled] = useState(true); // Default: enabled until we load settings
     const [previewDropdownPos, setPreviewDropdownPos] = useState<{top: number; left: number} | null>(null);
     const previewBtnRef = useRef<HTMLButtonElement>(null);
     const previewDropdownRef = useRef<HTMLDivElement>(null);
@@ -454,6 +465,9 @@ function App() {
     const [lektoratHighlight, setLektoratHighlight] = useState<{ from: number; to: number; id?: string } | null>(null);
     const [humanComments, setHumanComments] = useState<Array<{ id:string; from:number; to:number; text:string; note:string; suggestion?:string; status:'open'|'accepted'|'rejected' }>>([]);
     const commentApiRef = useRef<{ getSelection: ()=> { from:number; to:number; text:string } | null } | null>(null);
+    
+    // Auto-Paragraph Dialog State
+    const [autoParagraphScene, setAutoParagraphScene] = useState<{ id: string; title: string; content: string } | null>(null);
 
     const updateHumanComment = useCallback((id: string, patch: Partial<{ note:string; suggestion?:string; status:'open'|'accepted'|'rejected' }>) => {
         setHumanComments(prev => prev.map(c => c.id === id ? { ...c, ...patch } : c));
@@ -506,6 +520,27 @@ function App() {
             checkForUpdate();
         }, 3000); // 3 Sekunden nach Start
         return () => clearTimeout(timer);
+    }, []);
+
+    // Load AI provider settings and listen for changes
+    useEffect(() => {
+        // Initial load
+        invoke<{ enabled?: boolean }>('get_ai_provider_settings')
+            .then(settings => {
+                setAiEnabled(settings?.enabled !== false);
+            })
+            .catch(e => {
+                console.warn('Could not load AI provider settings:', e);
+                setAiEnabled(true); // Default to enabled
+            });
+        
+        // Listen for AI enabled changes from FontainePanel
+        const handleAiStatusChange = (e: Event) => {
+            const detail = (e as CustomEvent<{ enabled: boolean }>).detail;
+            setAiEnabled(detail.enabled);
+        };
+        window.addEventListener('ai-status-changed', handleAiStatusChange);
+        return () => window.removeEventListener('ai-status-changed', handleAiStatusChange);
     }, []);
 
     // Sprache-Change aus nativen Menü
@@ -1327,6 +1362,8 @@ function App() {
         const unlistenOpenPath = listen<string>('menu_open_project_path', (event) => { openProjectByPath(event.payload); });
         const unlistenReportBug = listen('menu_report_bug', () => { setBugReportCategory('bug'); setShowBugReportModal(true); });
         const unlistenSendFeedback = listen('menu_send_feedback', () => { setBugReportCategory('feedback'); setShowBugReportModal(true); });
+        const unlistenAbout = listen('menu_about', () => { setShowAboutDialog(true); });
+        const unlistenLocalAi = listen('menu_ai_local_model', () => { setShowLocalAiDialog(true); });
 
         return () => {
             console.log('[menu-listeners] Cleaning up menu event listeners...');
@@ -1345,6 +1382,8 @@ function App() {
             unlistenOpenPath.then(f => f());
             unlistenReportBug.then(f => f());
             unlistenSendFeedback.then(f => f());
+            unlistenAbout.then(f => f());
+            unlistenLocalAi.then(f => f());
             unlistenExport.then(f=>f());
             unlistenImport.then(f=>f());
         };
@@ -1722,6 +1761,28 @@ function App() {
                 onSceneStatusChange={handleSceneStatusChange}
                 onSceneColorChange={handleSceneColorChange}
                 onScenePovChange={handleScenePovChange}
+                onAutoParagraph={(scene) => {
+                  // For active scene, use editorContent; otherwise need to load from backend
+                  const content = scene.id === activeSceneId ? editorContent : '';
+                  if (content) {
+                    setAutoParagraphScene({ 
+                      id: scene.id, 
+                      title: scene.title, 
+                      content: content
+                    });
+                  } else {
+                    // Load scene content from backend first
+                    invoke<string>('get_scene_content', { id: scene.id })
+                      .then((loadedContent) => {
+                        setAutoParagraphScene({ 
+                          id: scene.id, 
+                          title: scene.title, 
+                          content: loadedContent
+                        });
+                      })
+                      .catch(console.error);
+                  }
+                }}
               />
             )}
 
@@ -1828,6 +1889,25 @@ function App() {
                             onScroll={(scrollTop: number) => setEditorScrollTop(scrollTop)}
                             lektoratHighlight={lektoratHighlight}
                             commentApi$={(api) => { commentApiRef.current = api; }}
+                            onOpenThesaurus={(word) => {
+                              setSelectedWord(word);
+                              setActiveTool('thesaurus');
+                            }}
+                            onResearch={(text) => {
+                              // Open research panel with prefilled search
+                              setActiveTool('research');
+                              window.dispatchEvent(new CustomEvent('research-query', { detail: { query: text } }));
+                            }}
+                            onFontaineAnalyze={(text, from, to) => {
+                              // Open Fontaine panel with context analysis request
+                              setActiveTool('fontaine');
+                              window.dispatchEvent(new CustomEvent('fontaine-analyze', { detail: { text, from, to } }));
+                            }}
+                            onOpenEntityTypeManager={() => {
+                              // Open entities panel for type management
+                              setActiveTool('entities');
+                              window.dispatchEvent(new CustomEvent('open-type-manager'));
+                            }}
                         />
                         
                         {/* Lektorat Sidebar - neben dem Editor */}
@@ -1962,26 +2042,14 @@ function App() {
                     )}
                     {activeTool === 'editor' && (
                         <>
-                        <div className="tool-card">
-                            <div className="tool-card-title">{t('info.editor')}</div>
-                            {editorSettings && (
-                                <div className="editor-settings-grid">
-                                    <label className="grid-label">
-                                        <span>{t('info.fontFamily')}</span>
-                                        <input value={editorSettings.font_family} onChange={(e) => setEditorSettings({ ...editorSettings, font_family: e.target.value })} />
-                                    </label>
-                                    <label className="grid-label">
-                                        <span>{t('info.fontSize')}</span>
-                                        <input type="number" min={10} max={48} value={editorSettings.font_size} onChange={(e) => setEditorSettings({ ...editorSettings, font_size: Number(e.target.value) })} />
-                                    </label>
-                                    <label className="grid-label">
-                                        <span>{t('info.lineHeight')}</span>
-                                        <input type="number" step={0.1} min={1.2} max={2} value={editorSettings.line_height} onChange={(e) => setEditorSettings({ ...editorSettings, line_height: Number(e.target.value) })} />
-                                    </label>
-                                    <button type="button" className="btn btn-sm btn-pill" onClick={() => handleSaveEditorSettings({})}>{t('info.saveSettings')}</button>
-                                </div>
-                            )}
-                        </div>
+                        <EditorSettingsPanel
+                            settings={editorSettings}
+                            onSave={(newSettings) => {
+                                setEditorSettings(newSettings);
+                                handleSaveEditorSettings(newSettings);
+                            }}
+                            saveNow={saveNow}
+                        />
                         
                         <div className="lt-settings-wrapper">
                             <LanguageToolSettings 
@@ -2112,8 +2180,13 @@ function App() {
                         } else {
                             setActiveTool(id);
                         }
+                        // Switch back to editor mode when clicking on a panel other than layout
+                        if (id !== 'layout' && mainViewMode !== 'editor') {
+                            setMainViewMode('editor');
+                        }
                     }}
                     onToolPin={(id) => setPinnedTool(id)}
+                    aiUnavailable={!aiEnabled}
                 />
             </div>
             )}
@@ -2216,6 +2289,42 @@ function App() {
                 onClose={() => setShowExportFormatDialog(false)}
                 projectTitle={project?.title}
                 projectAuthor={project?.author}
+            />
+            
+            {/* Auto-Paragraph Dialog */}
+            <AutoParagraphDialog
+                isOpen={autoParagraphScene !== null}
+                sceneId={autoParagraphScene?.id || ''}
+                sceneTitle={autoParagraphScene?.title || ''}
+                sceneContent={autoParagraphScene?.content || ''}
+                onClose={() => setAutoParagraphScene(null)}
+                onApply={(newContent) => {
+                    if (autoParagraphScene) {
+                        // If this is the active scene, update editor directly
+                        if (autoParagraphScene.id === activeSceneId) {
+                            setEditorContent(newContent);
+                            setIsDirty(true);
+                        } else {
+                            // Update scene content in backend
+                            invoke('update_scene_content', { 
+                                req: { id: autoParagraphScene.id, content: newContent } 
+                            }).catch(console.error);
+                        }
+                    }
+                    setAutoParagraphScene(null);
+                }}
+            />
+            
+            {/* About / Licenses Dialog */}
+            <AboutDialog 
+                isOpen={showAboutDialog} 
+                onClose={() => setShowAboutDialog(false)} 
+            />
+            
+            {/* Local AI Management Dialog */}
+            <LocalAiDialog 
+                isOpen={showLocalAiDialog} 
+                onClose={() => setShowLocalAiDialog(false)} 
             />
         </div>
     );

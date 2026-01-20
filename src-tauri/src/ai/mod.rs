@@ -215,6 +215,57 @@ pub fn current_load_state() -> LoadState {
     } else { LoadState::NotLoaded }
 }
 
+/// Check if local LLM is actually ready for generation
+pub fn is_local_llm_ready() -> bool {
+    // Method 1: Check LoadState
+    let state_ready = if let Ok(guard) = model_state().lock() {
+        let ready = matches!(&*guard, LoadState::Ready);
+        log::info!("[fontaine] is_local_llm_ready: LoadState={:?}, state_ready={}", 
+            match &*guard {
+                LoadState::NotLoaded => "NotLoaded",
+                LoadState::Loading => "Loading", 
+                LoadState::Ready => "Ready",
+                LoadState::Error(_) => "Error",
+            }, ready);
+        ready
+    } else {
+        log::warn!("[fontaine] is_local_llm_ready: could not lock model_state");
+        false
+    };
+    
+    // Method 2: Check if we have a current model name set
+    let has_current_model = get_current_model().is_some();
+    log::info!("[fontaine] is_local_llm_ready: has_current_model={}, current_model={:?}", 
+        has_current_model, get_current_model());
+    
+    // Method 3: Check the loader directly
+    let loader_ready = if let Ok(mm) = global().lock() {
+        if let Some(loader_arc) = &mm.loader {
+            if let Ok(l) = loader_arc.lock() {
+                let ready = l.is_ready();
+                log::info!("[fontaine] is_local_llm_ready: loader.is_ready()={}", ready);
+                ready
+            } else {
+                log::warn!("[fontaine] is_local_llm_ready: could not lock loader");
+                false
+            }
+        } else {
+            log::info!("[fontaine] is_local_llm_ready: no loader present");
+            false
+        }
+    } else {
+        log::warn!("[fontaine] is_local_llm_ready: could not lock global");
+        false
+    };
+    
+    // AI is ready if:
+    // 1. LoadState is Ready AND we have a current model, OR
+    // 2. The loader explicitly says it's ready
+    let result = (state_ready && has_current_model) || loader_ready;
+    log::info!("[fontaine] is_local_llm_ready: RESULT={}", result);
+    result
+}
+
 pub fn current_progress() -> Option<f32> { model_progress().lock().ok().and_then(|p| *p) }
 
 // Public token generation entry used by streaming layer

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/tauri';
-import { listen } from '@tauri-apps/api/event';
+import { listen, emit } from '@tauri-apps/api/event';
 import { useTranslation } from 'react-i18next';
 
 interface AiProviderSettings {
@@ -41,13 +41,22 @@ export const AiSettingsModal: React.FC = () => {
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  // Listen for menu event
+  // Listen for all AI menu events
   useEffect(() => {
-    const unlisten = listen('menu_ai_settings', () => {
+    const openModal = () => {
       setIsOpen(true);
       loadSettings();
-    });
-    return () => { unlisten.then(fn => fn()); };
+    };
+    
+    const unlisteners = [
+      listen('menu_ai_settings', openModal),
+      // NOTE: 'menu_ai_local_model' is now handled by LocalAiDialog in main.tsx
+      listen('menu_ai_connect_api', openModal),
+    ];
+    
+    return () => { 
+      unlisteners.forEach(p => p.then(fn => fn())); 
+    };
   }, []);
 
   const loadSettings = async () => {
@@ -63,6 +72,8 @@ export const AiSettingsModal: React.FC = () => {
     setIsSaving(true);
     try {
       await invoke('save_ai_provider_settings', { settings });
+      // Notify other components that AI settings changed
+      emit('ai-settings-changed');
       setIsOpen(false);
     } catch (e) {
       console.error('Failed to save AI settings:', e);

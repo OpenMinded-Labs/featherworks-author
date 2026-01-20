@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
   DndContext,
@@ -94,8 +95,9 @@ const StatusMenu: React.FC<{
   onStatusChange: (status: SceneStatus) => void;
   onColorChange: (color: SceneColor) => void;
   onPovChange: (pov: string) => void;
+  onAutoParagraph?: () => void;
   onClose: () => void;
-}> = ({ x, y, currentStatus, currentColor, currentPov, onStatusChange, onColorChange, onPovChange, onClose }) => {
+}> = ({ x, y, currentStatus, currentColor, currentPov, onStatusChange, onColorChange, onPovChange, onAutoParagraph, onClose }) => {
   const { t } = useTranslation();
   const menuRef = useRef<HTMLDivElement>(null);
   const [povInput, setPovInput] = useState(currentPov || '');
@@ -112,8 +114,26 @@ const StatusMenu: React.FC<{
   
   useLayoutEffect(() => {
     if (menuRef.current) {
-      menuRef.current.style.left = `${x}px`;
-      menuRef.current.style.top = `${y}px`;
+      const menuRect = menuRef.current.getBoundingClientRect();
+      const sidebar = menuRef.current.closest('.sidebar-left');
+      const sidebarRect = sidebar?.getBoundingClientRect();
+      
+      let newX = x;
+      let newY = y;
+      
+      // Keep within sidebar bounds horizontally
+      if (sidebarRect) {
+        const maxX = sidebarRect.right - menuRect.width - 8;
+        const minX = sidebarRect.left + 8;
+        newX = Math.max(minX, Math.min(x, maxX));
+      }
+      
+      // Keep within viewport vertically
+      const maxY = window.innerHeight - menuRect.height - 8;
+      newY = Math.max(8, Math.min(y, maxY));
+      
+      menuRef.current.style.left = `${newX}px`;
+      menuRef.current.style.top = `${newY}px`;
     }
   }, [x, y]);
 
@@ -169,6 +189,16 @@ const StatusMenu: React.FC<{
           />
         </div>
       </div>
+      {onAutoParagraph && (
+        <div className="status-menu-section">
+          <button
+            className="status-menu-action-btn"
+            onClick={() => { onAutoParagraph(); onClose(); }}
+          >
+            ¶ {t('autoParagraph.menuItem')}
+          </button>
+        </div>
+      )}
     </div>
   );
 };
@@ -195,6 +225,7 @@ interface SortableChapterProps {
   onSceneStatusChange?: (sceneId: string, status: SceneStatus) => void;
   onSceneColorChange?: (sceneId: string, color: SceneColor) => void;
   onScenePovChange?: (sceneId: string, pov: string) => void;
+  onAutoParagraph?: (scene: Scene) => void;
 }
 
 const SortableChapter: React.FC<SortableChapterProps> = ({
@@ -202,7 +233,7 @@ const SortableChapter: React.FC<SortableChapterProps> = ({
   onSelect, onStartEdit, onTitleChange, onFinishEdit, onSelectScene,
   onEditScene, onCreateScene, editingScene, setEditingScene,
   sceneTempTitle, setSceneTempTitle, onFinishSceneEdit,
-  onSceneStatusChange, onSceneColorChange, onScenePovChange
+  onSceneStatusChange, onSceneColorChange, onScenePovChange, onAutoParagraph
 }) => {
   const { t } = useTranslation();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: chapter.id });
@@ -263,6 +294,7 @@ const SortableChapter: React.FC<SortableChapterProps> = ({
               onStatusChange={onSceneStatusChange}
               onColorChange={onSceneColorChange}
               onPovChange={onScenePovChange}
+              onAutoParagraph={onAutoParagraph}
             />
           ))}
           <li className="sidebar-scene-row">
@@ -286,6 +318,7 @@ interface SortableSceneProps {
   onStatusChange?: (sceneId: string, status: SceneStatus) => void;
   onColorChange?: (sceneId: string, color: SceneColor) => void;
   onPovChange?: (sceneId: string, pov: string) => void;
+  onAutoParagraph?: (scene: Scene) => void;
 }
 
 // Tooltip für Szenen-Info
@@ -295,10 +328,43 @@ const SceneTooltip: React.FC<{ scene: Scene; visible: boolean; x: number; y: num
 
   useLayoutEffect(() => {
     if (tipRef.current && visible) {
-      tipRef.current.style.position = 'fixed';
-      tipRef.current.style.left = `${x + 10}px`;
-      tipRef.current.style.top = `${y - 10}px`;
-      tipRef.current.style.zIndex = '1000';
+      const tip = tipRef.current;
+      const rect = tip.getBoundingClientRect();
+      const tooltipWidth = rect.width || 200;
+      const tooltipHeight = rect.height || 100;
+      
+      // Find the sidebar container for bounds
+      const sidebar = tip.closest('.sidebar-panel') || tip.closest('.sidebar-left');
+      const sidebarRect = sidebar?.getBoundingClientRect();
+      
+      let finalX = x + 10;
+      let finalY = y - 10;
+      
+      // Keep within sidebar width if available, otherwise viewport
+      const maxX = sidebarRect ? sidebarRect.right - 10 : window.innerWidth - 10;
+      const minX = sidebarRect ? sidebarRect.left + 10 : 10;
+      
+      // Adjust X position
+      if (finalX + tooltipWidth > maxX) {
+        finalX = Math.max(minX, maxX - tooltipWidth);
+      }
+      if (finalX < minX) {
+        finalX = minX;
+      }
+      
+      // Adjust Y position to stay in viewport
+      if (finalY + tooltipHeight > window.innerHeight - 10) {
+        finalY = window.innerHeight - tooltipHeight - 10;
+      }
+      if (finalY < 10) {
+        finalY = 10;
+      }
+      
+      tip.style.position = 'fixed';
+      tip.style.left = `${finalX}px`;
+      tip.style.top = `${finalY}px`;
+      tip.style.zIndex = '1000';
+      tip.style.maxWidth = sidebarRect ? `${sidebarRect.width - 20}px` : '250px';
     }
   }, [x, y, visible]);
   
@@ -310,7 +376,8 @@ const SceneTooltip: React.FC<{ scene: Scene; visible: boolean; x: number; y: num
   const statusKey = scene.status ? SCENE_STATUS_KEYS[scene.status] : 'scene.status.draft';
   const statusIcon = scene.status ? SCENE_STATUS_ICONS[scene.status] : '📝';
   
-  return (
+  // Use Portal to render tooltip at document root (avoids overflow:hidden clipping)
+  return createPortal(
     <div 
       className="scene-tooltip"
       ref={tipRef}
@@ -322,7 +389,8 @@ const SceneTooltip: React.FC<{ scene: Scene; visible: boolean; x: number; y: num
         <div><span className="stat-label">{t('status.chars')}:</span> <span className="stat-value">~{charCount.toLocaleString()}</span></div>
         <div><span className="stat-label">{t('status.readingTime')}:</span> <span className="stat-value">{readingTime}</span></div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 
@@ -334,8 +402,9 @@ const SceneContextMenu: React.FC<{
   scene: Scene;
   onStatusChange: (status: SceneStatus) => void;
   onColorChange: (color: SceneColor) => void;
+  onAutoParagraph?: () => void;
   onClose: () => void;
-}> = ({ visible, x, y, scene, onStatusChange, onColorChange, onClose }) => {
+}> = ({ visible, x, y, scene, onStatusChange, onColorChange, onAutoParagraph, onClose }) => {
   const { t } = useTranslation();
   const menuRef = useRef<HTMLDivElement>(null);
   
@@ -393,13 +462,26 @@ const SceneContextMenu: React.FC<{
           ))}
         </div>
       </div>
+      {onAutoParagraph && (
+        <>
+          <div className="context-menu-divider" />
+          <div className="context-menu-section">
+            <button
+              className="context-menu-item"
+              onClick={() => { onAutoParagraph(); onClose(); }}
+            >
+              ¶ {t('autoParagraph.menuItem')}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 };
 
 const SortableScene: React.FC<SortableSceneProps> = ({
   scene, isActive, isEditing, tempTitle, onSelect, onStartEdit, onTitleChange, onFinishEdit,
-  onStatusChange, onColorChange, onPovChange
+  onStatusChange, onColorChange, onPovChange, onAutoParagraph
 }) => {
   const { t } = useTranslation();
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: scene.id });
@@ -413,6 +495,11 @@ const SortableScene: React.FC<SortableSceneProps> = ({
   // Rechtsklick für Kontextmenü
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
+    // Hide tooltip when opening context menu
+    setShowTooltip(false);
+    if (hoverTimeoutRef.current) {
+      clearTimeout(hoverTimeoutRef.current);
+    }
     setMenuPos({ x: e.clientX, y: e.clientY });
     setShowStatusMenu(true);
   };
@@ -425,11 +512,17 @@ const SortableScene: React.FC<SortableSceneProps> = ({
   }, [transform, transition]);
   
   const handleMouseEnter = (e: React.MouseEvent) => {
+    // Don't show tooltip if context menu is open
+    if (showStatusMenu) return;
+    
     const rect = (e.target as HTMLElement).getBoundingClientRect();
     setTooltipPos({ x: rect.right, y: rect.top });
     // Verzögerung bevor Tooltip erscheint
     hoverTimeoutRef.current = window.setTimeout(() => {
-      setShowTooltip(true);
+      // Double-check menu isn't open before showing
+      if (!showStatusMenu) {
+        setShowTooltip(true);
+      }
     }, 400);
   };
   
@@ -444,6 +537,7 @@ const SortableScene: React.FC<SortableSceneProps> = ({
     <li
       ref={(node) => { setNodeRef(node); (liRef as any).current = node; }}
       className={`sidebar-scene-row ${isDragging ? 'dragging' : ''}`}
+      onContextMenu={handleContextMenu}
     >
       {isEditing ? (
         <>
@@ -497,7 +591,7 @@ const SortableScene: React.FC<SortableSceneProps> = ({
               <span className="scene-word-badge">{scene.word_count}</span>
             )}
           </button>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onStartEdit} title={t('scene.rename')}>✎</button>
+          <button type="button" className="btn btn-ghost btn-sm" onClick={onStartEdit} onContextMenu={handleContextMenu} title={t('scene.rename')}>✎</button>
           <SceneTooltip scene={scene} visible={showTooltip} x={tooltipPos.x} y={tooltipPos.y} />
           {showStatusMenu && (
             <StatusMenu
@@ -518,6 +612,10 @@ const SortableScene: React.FC<SortableSceneProps> = ({
                 onPovChange?.(scene.id, pov);
                 setShowStatusMenu(false);
               }}
+              onAutoParagraph={onAutoParagraph ? () => {
+                onAutoParagraph(scene);
+                setShowStatusMenu(false);
+              } : undefined}
               onClose={() => setShowStatusMenu(false)}
             />
           )}
@@ -543,11 +641,12 @@ export const Sidebar: React.FC<{
   onSceneStatusChange?: (sceneId: string, status: SceneStatus) => void;
   onSceneColorChange?: (sceneId: string, color: SceneColor) => void;
   onScenePovChange?: (sceneId: string, pov: string) => void;
+  onAutoParagraph?: (scene: Scene) => void;
 }> = ({
   chapters, scenes, activeChapterId, activeSceneId,
   onSelectChapter, onSelectScene, onCreateChapter, onCreateScene,
   onRenameChapter, onRenameScene, onReorderChapters, onReorderScenes,
-  onSceneStatusChange, onSceneColorChange, onScenePovChange
+  onSceneStatusChange, onSceneColorChange, onScenePovChange, onAutoParagraph
 }) => {
   const { t } = useTranslation();
   const [editingChapter, setEditingChapter] = useState<string | null>(null);
@@ -633,6 +732,7 @@ export const Sidebar: React.FC<{
                 onSceneStatusChange={onSceneStatusChange}
                 onSceneColorChange={onSceneColorChange}
                 onScenePovChange={onScenePovChange}
+                onAutoParagraph={onAutoParagraph}
               />
             ))}
           </ul>

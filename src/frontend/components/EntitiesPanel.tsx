@@ -15,6 +15,7 @@ interface EntityType {
   default_color: string;
   is_system: boolean;
   order_num: number;
+  schema_json?: string;  // JSON array of custom fields
 }
 
 interface Entity {
@@ -93,7 +94,18 @@ export const EntitiesPanel: React.FC<EntitiesPanelProps> = ({ onEntitySelect, ma
   
   // Custom type modal
   const [showTypeModal, setShowTypeModal] = useState(false);
-  const [newType, setNewType] = useState({ name: '', name_plural: '', icon: '📌', default_color: '#667eea' });
+  const [newType, setNewType] = useState({ 
+    name: '', 
+    name_plural: '', 
+    icon: '📌', 
+    default_color: '#667eea',
+    schema_json: '[]' as string,  // JSON array of custom fields
+  });
+  const [customFields, setCustomFields] = useState<Array<{name: string; type: string; label: string; placeholder?: string}>>([]);
+  
+  // Edit schema modal for existing types (including system types)
+  const [editSchemaTypeId, setEditSchemaTypeId] = useState<string | null>(null);
+  const [editSchemaFields, setEditSchemaFields] = useState<Array<{name: string; type: string; label: string; placeholder?: string}>>([]);
   
   // AI Scan state
   const [isScanning, setIsScanning] = useState(false);
@@ -138,11 +150,48 @@ export const EntitiesPanel: React.FC<EntitiesPanelProps> = ({ onEntitySelect, ma
     loadData();
   }, [loadData]);
 
-  // Load AI enable flag
+  // Load AI enable flag and listen for changes
   useEffect(() => {
     invoke<{ enabled?: boolean }>('get_ai_provider_settings')
       .then(s => setAiEnabled(s.enabled !== false))
       .catch(() => setAiEnabled(true));
+    
+    // Listen for AI status changes from FontainePanel
+    const handleAiStatusChange = (e: Event) => {
+      const detail = (e as CustomEvent<{ enabled: boolean }>).detail;
+      setAiEnabled(detail.enabled);
+    };
+    window.addEventListener('ai-status-changed', handleAiStatusChange);
+    return () => window.removeEventListener('ai-status-changed', handleAiStatusChange);
+  }, []);
+
+  // Listen for create-entity events from context menu
+  useEffect(() => {
+    const handleCreateEntity = (event: Event) => {
+      const customEvent = event as CustomEvent<{ name: string }>;
+      const name = customEvent.detail?.name || '';
+      if (name) {
+        setIsCreating(true);
+        setEditForm({ name, aliases: '', description: '', notes: '', color: '' });
+        // Auto-select first type if none selected
+        if (!selectedTypeId && entityTypes.length > 0) {
+          setSelectedTypeId(entityTypes[0].id);
+        }
+      }
+    };
+    
+    window.addEventListener('create-entity', handleCreateEntity);
+    return () => window.removeEventListener('create-entity', handleCreateEntity);
+  }, [entityTypes, selectedTypeId]);
+
+  // Listen for open-type-manager events from CreateEntityDialog
+  useEffect(() => {
+    const handleOpenTypeManager = () => {
+      setShowTypeModal(true);
+    };
+    
+    window.addEventListener('open-type-manager', handleOpenTypeManager);
+    return () => window.removeEventListener('open-type-manager', handleOpenTypeManager);
   }, []);
 
   // Entity extraction event listeners (using new chunked backend)
@@ -470,12 +519,76 @@ export const EntitiesPanel: React.FC<EntitiesPanelProps> = ({ onEntitySelect, ma
   const handleCreateType = async () => {
     if (!newType.name.trim() || !newType.name_plural.trim()) return;
     try {
-      await invoke('create_entity_type', { req: newType });
+      // Build schema_json from customFields
+      const schemaJson = JSON.stringify(customFields);
+      await invoke('create_entity_type', { 
+        req: { ...newType, schema_json: schemaJson }
+      });
       setShowTypeModal(false);
-      setNewType({ name: '', name_plural: '', icon: '📌', default_color: '#667eea' });
+      setNewType({ name: '', name_plural: '', icon: '📌', default_color: '#667eea', schema_json: '[]' });
+      setCustomFields([]);
       loadData();
     } catch (err) {
       console.error('Failed to create entity type:', err);
+    }
+  };
+
+  // Helper to add a custom field to the new type
+  const addCustomField = () => {
+    setCustomFields(prev => [...prev, { name: '', type: 'text', label: '', placeholder: '' }]);
+  };
+
+  const updateCustomField = (index: number, field: Partial<{name: string; type: string; label: string; placeholder?: string}>) => {
+    setCustomFields(prev => prev.map((f, i) => i === index ? { ...f, ...field } : f));
+  };
+
+  const removeCustomField = (index: number) => {
+    setCustomFields(prev => prev.filter((_, i) => i !== index));
+  };
+
+  // ============================================================================
+  // Edit Schema for Existing Entity Types (including system types)
+  // ============================================================================
+  
+  const openEditSchemaModal = (type: EntityType) => {
+    // Parse existing schema
+    let fields: Array<{name: string; type: string; label: string; placeholder?: string}> = [];
+    if (type.schema_json) {
+      try {
+        fields = JSON.parse(type.schema_json);
+      } catch (e) {
+        console.warn('Failed to parse schema_json:', e);
+      }
+    }
+    setEditSchemaTypeId(type.id);
+    setEditSchemaFields(fields);
+  };
+
+  const addEditSchemaField = () => {
+    setEditSchemaFields(prev => [...prev, { name: '', type: 'text', label: '', placeholder: '' }]);
+  };
+
+  const updateEditSchemaField = (index: number, field: Partial<{name: string; type: string; label: string; placeholder?: string}>) => {
+    setEditSchemaFields(prev => prev.map((f, i) => i === index ? { ...f, ...field } : f));
+  };
+
+  const removeEditSchemaField = (index: number) => {
+    setEditSchemaFields(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleSaveEditSchema = async () => {
+    if (!editSchemaTypeId) return;
+    try {
+      const schemaJson = JSON.stringify(editSchemaFields.filter(f => f.name && f.label));
+      await invoke('update_entity_type_schema', { 
+        typeId: editSchemaTypeId, 
+        schemaJson 
+      });
+      setEditSchemaTypeId(null);
+      setEditSchemaFields([]);
+      loadData();
+    } catch (err) {
+      console.error('Failed to update entity type schema:', err);
     }
   };
 
@@ -621,26 +734,31 @@ export const EntitiesPanel: React.FC<EntitiesPanelProps> = ({ onEntitySelect, ma
       <div className="entities-header">
         <div className="panel-title">{t('entities.title')}</div>
         <div className="entities-header-actions">
-          {/* Scene Scan Button */}
-          {(sceneContent || manuscriptContent) && (sceneContent?.length || 0) > 50 && (
-            <button 
-              className="btn btn-sm btn-secondary entity-scan-btn" 
-              onClick={handleScanScene}
-              disabled={isScanning || !aiEnabled}
-              title={t('entities.scan.sceneTitle')}
-            >
-              {isScanning ? '⏳' : '🔍'} {t('entities.scan.sceneButton')}
-            </button>
+          {/* AI Scan Buttons - only show when AI is available */}
+          {aiEnabled && (
+            <>
+              {/* Scene Scan Button */}
+              {(sceneContent || manuscriptContent) && (sceneContent?.length || 0) > 50 && (
+                <button 
+                  className="btn btn-sm btn-secondary entity-scan-btn" 
+                  onClick={handleScanScene}
+                  disabled={isScanning}
+                  title={t('entities.scan.sceneTitle')}
+                >
+                  {isScanning ? '⏳' : '🔍'} {t('entities.scan.sceneButton')}
+                </button>
+              )}
+              {/* Manuscript Scan Button */}
+              <button 
+                className="btn btn-sm btn-secondary entity-scan-btn" 
+                onClick={handleScanManuscript}
+                disabled={isScanning}
+                title={t('entities.scan.manuscriptTitle')}
+              >
+                {isScanning ? '⏳' : '📚'} {t('entities.scan.manuscriptButton')}
+              </button>
+            </>
           )}
-          {/* Manuscript Scan Button - always show when AI is available */}
-          <button 
-            className="btn btn-sm btn-secondary entity-scan-btn" 
-            onClick={handleScanManuscript}
-            disabled={isScanning || !aiEnabled}
-            title={t('entities.scan.manuscriptTitle')}
-          >
-            {isScanning ? '⏳' : '📚'} {t('entities.scan.manuscriptButton')}
-          </button>
           <button 
             className="btn btn-sm btn-icon" 
             onClick={() => openCreateModal()}
@@ -714,7 +832,12 @@ export const EntitiesPanel: React.FC<EntitiesPanelProps> = ({ onEntitySelect, ma
             key={type.id}
             className={`type-tab ${selectedTypeId === type.id ? 'active' : ''}`}
             onClick={() => setSelectedTypeId(type.id)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              openEditSchemaModal(type);
+            }}
             data-tab-color={type.default_color}
+            title={t('entities.rightClickToEditSchema', 'Rechtsklick für Feldeinstellungen')}
           >
             <span className="type-icon">{type.icon}</span>
             <span className="type-name">{type.name_plural}</span>
@@ -990,11 +1113,11 @@ export const EntitiesPanel: React.FC<EntitiesPanelProps> = ({ onEntitySelect, ma
 
       {/* Custom Type Modal */}
       {showTypeModal && (
-        <div className="modal-overlay" onClick={() => setShowTypeModal(false)}>
-          <div className="modal entity-modal" onClick={e => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={() => { setShowTypeModal(false); setCustomFields([]); }}>
+          <div className="modal entity-modal entity-type-modal" onClick={e => e.stopPropagation()}>
             <div className="modal-header">
               <h3>{t('entities.createType')}</h3>
-              <button className="modal-close" onClick={() => setShowTypeModal(false)}>×</button>
+              <button className="modal-close" onClick={() => { setShowTypeModal(false); setCustomFields([]); }}>×</button>
             </div>
             <div className="modal-body">
               <div className="form-group">
@@ -1020,30 +1143,97 @@ export const EntitiesPanel: React.FC<EntitiesPanelProps> = ({ onEntitySelect, ma
                   title={t('entities.typeNamePlural')}
                 />
               </div>
-              <div className="form-group">
-                <label>{t('entities.typeIcon')}</label>
-                <input
-                  type="text"
-                  value={newType.icon}
-                  onChange={e => setNewType(t => ({ ...t, icon: e.target.value }))}
-                  className="settings-input icon-input"
-                  maxLength={2}
-                  title={t('entities.typeIcon')}
-                />
+              <div className="form-row">
+                <div className="form-group form-group-half">
+                  <label>{t('entities.typeIcon')}</label>
+                  <input
+                    type="text"
+                    value={newType.icon}
+                    onChange={e => setNewType(t => ({ ...t, icon: e.target.value }))}
+                    className="settings-input icon-input"
+                    maxLength={2}
+                    title={t('entities.typeIcon')}
+                  />
+                </div>
+                <div className="form-group form-group-half">
+                  <label>{t('entities.typeColor')}</label>
+                  <input
+                    type="color"
+                    value={newType.default_color}
+                    onChange={e => setNewType(t => ({ ...t, default_color: e.target.value }))}
+                    className="color-picker"
+                    title={t('entities.typeColor')}
+                  />
+                </div>
               </div>
-              <div className="form-group">
-                <label>{t('entities.typeColor')}</label>
-                <input
-                  type="color"
-                  value={newType.default_color}
-                  onChange={e => setNewType(t => ({ ...t, default_color: e.target.value }))}
-                  className="color-picker"
-                  title={t('entities.typeColor')}
-                />
+              
+              {/* Custom Fields Schema Editor */}
+              <div className="custom-fields-section">
+                <div className="custom-fields-header">
+                  <label>{t('entities.customFields', 'Eigene Felder')}</label>
+                  <button 
+                    className="btn btn-sm btn-ghost"
+                    onClick={addCustomField}
+                    type="button"
+                    title={t('entities.addField', 'Feld hinzufügen')}
+                  >
+                    + {t('entities.addField', 'Feld')}
+                  </button>
+                </div>
+                
+                {customFields.length === 0 ? (
+                  <p className="custom-fields-hint">{t('entities.noCustomFields', 'Keine eigenen Felder definiert. Klicke auf "+ Feld" um spezifische Datenfelder für diesen Typ anzulegen.')}</p>
+                ) : (
+                  <div className="custom-fields-list">
+                    {customFields.map((field, idx) => (
+                      <div key={idx} className="custom-field-row">
+                        <input
+                          type="text"
+                          value={field.label}
+                          onChange={e => {
+                            const label = e.target.value;
+                            const name = label.toLowerCase().replace(/[^a-z0-9]/g, '_');
+                            updateCustomField(idx, { label, name });
+                          }}
+                          placeholder={t('entities.fieldLabel', 'Feldname')}
+                          className="settings-input field-label-input"
+                          title={t('entities.fieldLabel', 'Feldname')}
+                        />
+                        <select
+                          value={field.type}
+                          onChange={e => updateCustomField(idx, { type: e.target.value })}
+                          className="settings-input field-type-select"
+                          title={t('entities.fieldType', 'Feldtyp')}
+                        >
+                          <option value="text">{t('entities.fieldTypeText', 'Text')}</option>
+                          <option value="textarea">{t('entities.fieldTypeTextarea', 'Mehrzeilig')}</option>
+                          <option value="number">{t('entities.fieldTypeNumber', 'Zahl')}</option>
+                          <option value="date">{t('entities.fieldTypeDate', 'Datum')}</option>
+                        </select>
+                        <input
+                          type="text"
+                          value={field.placeholder || ''}
+                          onChange={e => updateCustomField(idx, { placeholder: e.target.value })}
+                          placeholder={t('entities.fieldPlaceholder', 'Platzhalter')}
+                          className="settings-input field-placeholder-input"
+                          title={t('entities.fieldPlaceholder', 'Platzhalter')}
+                        />
+                        <button
+                          className="btn btn-sm btn-ghost btn-danger"
+                          onClick={() => removeCustomField(idx)}
+                          type="button"
+                          title={t('entities.removeField', 'Entfernen')}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
             <div className="modal-footer">
-              <button className="btn btn-ghost" onClick={() => setShowTypeModal(false)}>
+              <button className="btn btn-ghost" onClick={() => { setShowTypeModal(false); setCustomFields([]); }}>
                 {t('cancel')}
               </button>
               <button 
@@ -1052,6 +1242,95 @@ export const EntitiesPanel: React.FC<EntitiesPanelProps> = ({ onEntitySelect, ma
                 disabled={!newType.name.trim() || !newType.name_plural.trim()}
               >
                 {t('create')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Edit Schema Modal - for adding custom fields to existing types */}
+      {editSchemaTypeId && (
+        <div className="modal-overlay" onClick={() => { setEditSchemaTypeId(null); setEditSchemaFields([]); }}>
+          <div className="modal entity-modal entity-type-modal" onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3>⚙️ {t('entities.editSchemaTitle', 'Eigene Felder bearbeiten')}</h3>
+              <button className="modal-close" onClick={() => { setEditSchemaTypeId(null); setEditSchemaFields([]); }}>×</button>
+            </div>
+            <div className="modal-body">
+              <p className="modal-hint">{t('entities.editSchemaHint', 'Füge zusätzliche Datenfelder für diesen Entity-Typ hinzu. Diese erscheinen beim Erstellen und Bearbeiten von Entities.')}</p>
+              
+              <div className="custom-fields-section" style={{ marginTop: '16px', paddingTop: 0, borderTop: 'none' }}>
+                <div className="custom-fields-header">
+                  <label>{t('entities.customFields', 'Eigene Felder')}</label>
+                  <button 
+                    className="btn btn-sm btn-ghost"
+                    onClick={addEditSchemaField}
+                    type="button"
+                  >
+                    + {t('entities.addField', 'Feld')}
+                  </button>
+                </div>
+                
+                {editSchemaFields.length === 0 ? (
+                  <p className="custom-fields-hint">{t('entities.noCustomFields', 'Keine eigenen Felder definiert. Klicke auf "+ Feld" um spezifische Datenfelder für diesen Typ anzulegen.')}</p>
+                ) : (
+                  <div className="custom-fields-list">
+                    {editSchemaFields.map((field, idx) => (
+                      <div key={idx} className="custom-field-row">
+                        <input
+                          type="text"
+                          value={field.label}
+                          onChange={e => {
+                            const label = e.target.value;
+                            const name = label.toLowerCase().replace(/[^a-z0-9]/g, '_');
+                            updateEditSchemaField(idx, { label, name });
+                          }}
+                          placeholder={t('entities.fieldLabel', 'Feldname')}
+                          className="settings-input field-label-input"
+                          title={t('entities.fieldLabel', 'Feldname')}
+                        />
+                        <select
+                          value={field.type}
+                          onChange={e => updateEditSchemaField(idx, { type: e.target.value })}
+                          className="settings-input field-type-select"
+                          title={t('entities.fieldType', 'Feldtyp')}
+                        >
+                          <option value="text">{t('entities.fieldTypeText', 'Text')}</option>
+                          <option value="textarea">{t('entities.fieldTypeTextarea', 'Mehrzeilig')}</option>
+                          <option value="number">{t('entities.fieldTypeNumber', 'Zahl')}</option>
+                          <option value="date">{t('entities.fieldTypeDate', 'Datum')}</option>
+                        </select>
+                        <input
+                          type="text"
+                          value={field.placeholder || ''}
+                          onChange={e => updateEditSchemaField(idx, { placeholder: e.target.value })}
+                          placeholder={t('entities.fieldPlaceholder', 'Platzhalter')}
+                          className="settings-input field-placeholder-input"
+                          title={t('entities.fieldPlaceholder', 'Platzhalter')}
+                        />
+                        <button
+                          className="btn btn-sm btn-ghost btn-danger"
+                          onClick={() => removeEditSchemaField(idx)}
+                          type="button"
+                          title={t('entities.removeField', 'Entfernen')}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn btn-ghost" onClick={() => { setEditSchemaTypeId(null); setEditSchemaFields([]); }}>
+                {t('cancel')}
+              </button>
+              <button 
+                className="btn btn-primary" 
+                onClick={handleSaveEditSchema}
+              >
+                {t('save')}
               </button>
             </div>
           </div>

@@ -9,6 +9,9 @@ export interface EditorSettings {
   paragraph_spacing?: number;
   page_padding?: number;
   editor_language?: 'de' | 'en';  // NEW: separate editor language
+  typewriter_mode?: boolean;  // Keep cursor vertically centered
+  typewriter_sound?: boolean;  // Typewriter key sounds
+  typewriter_volume?: number;  // Sound volume 0-100
 }
 
 interface Props {
@@ -111,6 +114,61 @@ export const EditorSettingsPanel: React.FC<Props> = ({ settings, onSave, saveNow
           <option value="en">{t('settings.editorLanguage.en')}</option>
         </select>
         <span className="settings-hint">{t('settings.editorLanguage.hint')}</span>
+      </div>
+
+      {/* Typewriter Mode Toggle - moved up for visibility */}
+      <div className="settings-group">
+        <label className="settings-label settings-checkbox-label">
+          <input
+            type="checkbox"
+            checked={local.typewriter_mode || false}
+            onChange={e => handleChange('typewriter_mode', e.target.checked)}
+            className="settings-checkbox"
+          />
+          <span className="checkbox-text">
+            {t('settings.typewriterMode', 'Schreibmaschinen-Modus')}
+          </span>
+        </label>
+        <span className="settings-hint">
+          {t('settings.typewriterModeHint', 'Hält den Cursor vertikal zentriert beim Schreiben')}
+        </span>
+      </div>
+
+      {/* Typewriter Sound - only enabled when typewriter mode is on */}
+      <div className={`settings-group settings-indent ${!local.typewriter_mode ? 'settings-disabled' : ''}`}>
+        <label className="settings-label settings-checkbox-label">
+          <input
+            type="checkbox"
+            checked={local.typewriter_sound || false}
+            onChange={e => handleChange('typewriter_sound', e.target.checked)}
+            className="settings-checkbox"
+            disabled={!local.typewriter_mode}
+          />
+          <span className="checkbox-text">
+            🔊 {t('settings.typewriterSound', 'Schreibmaschinen-Geräusche')}
+          </span>
+        </label>
+        <span className="settings-hint">
+          {t('settings.typewriterSoundHint', 'Tastenklick-Sounds beim Tippen')}
+        </span>
+      </div>
+
+      {/* Sound Volume - only enabled when sound is on */}
+      <div className={`settings-group settings-indent ${(!local.typewriter_mode || !local.typewriter_sound) ? 'settings-disabled' : ''}`}>
+        <label className="settings-label" htmlFor="typewriter-volume">
+          {t('settings.typewriterVolume', 'Lautstärke')}: {local.typewriter_volume ?? 50}%
+        </label>
+        <input
+          id="typewriter-volume"
+          type="range"
+          min={0}
+          max={100}
+          step={5}
+          value={local.typewriter_volume ?? 50}
+          onChange={e => handleChange('typewriter_volume', Number(e.target.value))}
+          className="settings-slider"
+          disabled={!local.typewriter_mode || !local.typewriter_sound}
+        />
       </div>
       
       <div className="settings-group">

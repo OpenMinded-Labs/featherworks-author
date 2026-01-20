@@ -56,6 +56,18 @@ pub struct EditorSettings {
     pub font_family: String,
     pub font_size: u32,
     pub line_height: f32,
+    #[serde(default)]
+    pub paragraph_spacing: Option<f32>,
+    #[serde(default)]
+    pub page_padding: Option<u32>,
+    #[serde(default)]
+    pub editor_language: Option<String>,
+    #[serde(default)]
+    pub typewriter_mode: Option<bool>,
+    #[serde(default)]
+    pub typewriter_sound: Option<bool>,
+    #[serde(default)]
+    pub typewriter_volume: Option<u32>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -147,6 +159,7 @@ pub fn create_database(
             default_color TEXT DEFAULT '#667eea',
             is_system INTEGER DEFAULT 0,
             order_num INTEGER DEFAULT 0,
+            schema_json TEXT DEFAULT '[]',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS entities (
@@ -474,6 +487,7 @@ pub fn open_database(path: &str) -> Result<Connection, DatabaseOperationError> {
             default_color TEXT DEFAULT '#667eea',
             is_system INTEGER DEFAULT 0,
             order_num INTEGER DEFAULT 0,
+            schema_json TEXT DEFAULT '[]',
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
         CREATE TABLE IF NOT EXISTS entities (
@@ -682,6 +696,7 @@ pub fn open_database(path: &str) -> Result<Connection, DatabaseOperationError> {
     let _ = conn.execute("ALTER TABLE scenes ADD COLUMN content_json TEXT", []);
     let _ = conn.execute("ALTER TABLE scenes ADD COLUMN summary TEXT", []);
     let _ = conn.execute("ALTER TABLE chapters ADD COLUMN summary TEXT", []);
+    let _ = conn.execute("ALTER TABLE entity_types ADD COLUMN schema_json TEXT DEFAULT '[]'", []);
     
     // Migration: layout_settings von key/value zu id/settings_json
     // Prüfen ob alte Struktur existiert und konvertieren
@@ -896,6 +911,12 @@ pub fn load_settings(conn: &Connection) -> Result<EditorSettings, DatabaseOperat
         font_family: settings_map.get("font_family").cloned().unwrap_or_else(|| "Inter".to_string()),
         font_size: settings_map.get("font_size").and_then(|s| s.parse().ok()).unwrap_or(16),
         line_height: settings_map.get("line_height").and_then(|s| s.parse().ok()).unwrap_or(1.6),
+        paragraph_spacing: settings_map.get("paragraph_spacing").and_then(|s| s.parse().ok()),
+        page_padding: settings_map.get("page_padding").and_then(|s| s.parse().ok()),
+        editor_language: settings_map.get("editor_language").cloned(),
+        typewriter_mode: settings_map.get("typewriter_mode").and_then(|s| s.parse().ok()),
+        typewriter_sound: settings_map.get("typewriter_sound").and_then(|s| s.parse().ok()),
+        typewriter_volume: settings_map.get("typewriter_volume").and_then(|s| s.parse().ok()),
     })
 }
 
@@ -904,6 +925,24 @@ pub fn save_settings(conn: &mut Connection, settings: &EditorSettings) -> Result
     tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('font_family', ?1)", [settings.font_family.clone()])?;
     tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('font_size', ?1)", [settings.font_size.to_string()])?;
     tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('line_height', ?1)", [settings.line_height.to_string()])?;
+    if let Some(v) = settings.paragraph_spacing {
+        tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('paragraph_spacing', ?1)", [v.to_string()])?;
+    }
+    if let Some(v) = settings.page_padding {
+        tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('page_padding', ?1)", [v.to_string()])?;
+    }
+    if let Some(ref v) = settings.editor_language {
+        tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('editor_language', ?1)", [v.clone()])?;
+    }
+    if let Some(v) = settings.typewriter_mode {
+        tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('typewriter_mode', ?1)", [v.to_string()])?;
+    }
+    if let Some(v) = settings.typewriter_sound {
+        tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('typewriter_sound', ?1)", [v.to_string()])?;
+    }
+    if let Some(v) = settings.typewriter_volume {
+        tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('typewriter_volume', ?1)", [v.to_string()])?;
+    }
     tx.commit()?;
     Ok(())
 }
@@ -1069,6 +1108,8 @@ pub struct EntityType {
     pub default_color: String,
     pub is_system: bool,
     pub order_num: i32,
+    #[serde(default)]
+    pub schema_json: String,    // JSON schema for custom fields: [{"name": "age", "type": "number", "label": "Alter"}, ...]
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -1114,7 +1155,7 @@ pub struct EntityImageMeta {
 /// List all entity types (system + user-created)
 pub fn list_entity_types(conn: &Connection) -> Result<Vec<EntityType>, DatabaseOperationError> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, name_plural, icon, default_color, is_system, order_num 
+        "SELECT id, name, name_plural, icon, default_color, is_system, order_num, COALESCE(schema_json, '[]')
          FROM entity_types ORDER BY order_num ASC"
     )?;
     let types = stmt.query_map([], |row| {
@@ -1126,6 +1167,7 @@ pub fn list_entity_types(conn: &Connection) -> Result<Vec<EntityType>, DatabaseO
             default_color: row.get(4)?,
             is_system: row.get::<_, i32>(5)? == 1,
             order_num: row.get(6)?,
+            schema_json: row.get(7)?,
         })
     })?.collect::<Result<Vec<_>, _>>()?;
     Ok(types)
@@ -1144,8 +1186,8 @@ pub fn create_entity_type(
         "SELECT COALESCE(MAX(order_num), 0) + 1 FROM entity_types", [], |row| row.get(0)
     )?;
     conn.execute(
-        "INSERT INTO entity_types (id, name, name_plural, icon, default_color, is_system, order_num) 
-         VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6)",
+        "INSERT INTO entity_types (id, name, name_plural, icon, default_color, is_system, order_num, schema_json) 
+         VALUES (?1, ?2, ?3, ?4, ?5, 0, ?6, '[]')",
         rusqlite::params![id, name, name_plural, icon, default_color, order_num],
     )?;
     Ok(EntityType {
@@ -1156,7 +1198,34 @@ pub fn create_entity_type(
         default_color: default_color.to_string(),
         is_system: false,
         order_num,
+        schema_json: "[]".to_string(),
     })
+}
+
+/// Update entity type schema (custom fields definition)
+pub fn update_entity_type_schema(conn: &Connection, type_id: &str, schema_json: &str) -> Result<(), DatabaseOperationError> {
+    conn.execute(
+        "UPDATE entity_types SET schema_json = ?1 WHERE id = ?2",
+        rusqlite::params![schema_json, type_id],
+    )?;
+    Ok(())
+}
+
+/// Update entity type (name, icon, color, etc.)
+pub fn update_entity_type(
+    conn: &Connection,
+    type_id: &str,
+    name: &str,
+    name_plural: &str,
+    icon: &str,
+    default_color: &str,
+    schema_json: &str,
+) -> Result<(), DatabaseOperationError> {
+    conn.execute(
+        "UPDATE entity_types SET name = ?1, name_plural = ?2, icon = ?3, default_color = ?4, schema_json = ?5 WHERE id = ?6",
+        rusqlite::params![name, name_plural, icon, default_color, schema_json, type_id],
+    )?;
+    Ok(())
 }
 
 /// Delete a custom entity type (only non-system types)

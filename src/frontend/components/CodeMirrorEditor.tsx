@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { EditorState, StateEffect, StateField, Text, Range } from '@codemirror/state';
 import { EditorView, keymap, highlightActiveLine, Decoration, DecorationSet, ViewPlugin, ViewUpdate } from '@codemirror/view';
 import { defaultHighlightStyle, syntaxHighlighting } from '@codemirror/language';
@@ -15,10 +15,12 @@ import {
   WordRepetition
 } from '../languageToolService';
 import { fetchEntityHighlights, findEntityMatches, EntityMatch, EntityHighlight } from '../entityHighlightService';
+import { TypewriterSound } from '../typewriterSoundService';
 import i18n from '../i18n';
 import type { WordInfo } from './SynonymTooltip';
 import type { SpellErrorInfo } from './SpellcheckTooltip';
 import type { EntityTooltipInfo } from './EntityTooltip';
+import type { SelectionInfo } from './EditorContextMenu';
 
 // Extended error info for all issue types
 export interface ProofreadingErrorInfo {
@@ -45,10 +47,14 @@ interface Props {
   onSpellErrorClick?: (errorInfo: SpellErrorInfo | null) => void;
   onProofreadingErrorClick?: (errorInfo: ProofreadingErrorInfo | null) => void;
   onEntityHover?: (info: EntityTooltipInfo | null) => void;
+  onSelectionContextMenu?: (info: SelectionInfo) => void;
   entityHighlightEnabled?: boolean;
   editorLanguage?: 'de' | 'en';  // Editor language for spellcheck
   onScroll?: (scrollTop: number) => void;
   lektoratHighlight?: { from: number; to: number; id?: string } | null;
+  typewriterMode?: boolean;  // Keep cursor vertically centered
+  typewriterSound?: boolean;  // Play typewriter sounds
+  typewriterVolume?: number;  // Sound volume 0-1
 }
 
 // Effects & field for search highlights
@@ -246,13 +252,45 @@ function getIssueClassName(type: IssueType): string {
 }
 
 // Simple formatting marks using markdown shortcuts for now (bold **, italic *)
-export const CodeMirrorEditor:React.FC<Props> = ({ value, onChange, command$, findQuery, regex, searchApi$, commentApi$, onSynonymRequest, onSpellErrorClick, onProofreadingErrorClick, onEntityHover, entityHighlightEnabled = true, editorLanguage = 'de', onScroll, lektoratHighlight }) => {
+export const CodeMirrorEditor:React.FC<Props> = ({ value, onChange, command$, findQuery, regex, searchApi$, commentApi$, onSynonymRequest, onSpellErrorClick, onProofreadingErrorClick, onEntityHover, onSelectionContextMenu, entityHighlightEnabled = true, editorLanguage = 'de', onScroll, lektoratHighlight, typewriterMode = false, typewriterSound = false, typewriterVolume = 50 }) => {
   const ref = useRef<HTMLDivElement|null>(null);
   const viewRef = useRef<EditorView|null>(null);
   const matchesRef = useRef<Match[]>([]);
   const activeIndexRef = useRef(0);
   const synonymDebounceRef = useRef<number|null>(null);
   const proofreadingTimeoutRef = useRef<number|null>(null);
+  const typewriterModeRef = useRef(typewriterMode);
+  
+  // Keep ref in sync with prop
+  useEffect(() => {
+    typewriterModeRef.current = typewriterMode;
+  }, [typewriterMode]);
+  
+  // Sync typewriter sound settings
+  useEffect(() => {
+    TypewriterSound.setEnabled(typewriterSound && typewriterMode);
+    TypewriterSound.setVolume(typewriterVolume);
+  }, [typewriterSound, typewriterVolume, typewriterMode]);
+  
+  // When typewriter mode toggles on, center the current cursor once immediately
+  useEffect(() => {
+    if (typewriterMode && viewRef.current) {
+      const v = viewRef.current;
+      requestAnimationFrame(() => {
+        if (!typewriterModeRef.current || !v) return;
+        const head = v.state.selection.main.head;
+        const coords = v.coordsAtPos(head);
+        if (coords) {
+          const scrollDOM = v.scrollDOM;
+          const editorRect = scrollDOM.getBoundingClientRect();
+          const targetY = editorRect.height / 2;
+          const cursorY = coords.top - editorRect.top;
+          const offset = cursorY - targetY;
+          scrollDOM.scrollTop += offset;
+        }
+      });
+    }
+  }, [typewriterMode]);
   
   // Trigger async spellcheck via backend
   async function triggerSpellcheck(view: EditorView) {
@@ -525,6 +563,24 @@ export const CodeMirrorEditor:React.FC<Props> = ({ value, onChange, command$, fi
             // Trigger all proofreading checks on content change
             triggerAllProofreading(v.view);
           }
+          // Typewriter mode: scroll to keep cursor centered on ANY cursor movement
+          if ((v.docChanged || v.selectionSet) && typewriterModeRef.current) {
+            requestAnimationFrame(() => {
+              const head = v.view.state.selection.main.head;
+              const coords = v.view.coordsAtPos(head);
+              if (coords) {
+                const scrollDOM = v.view.scrollDOM;
+                const editorRect = scrollDOM.getBoundingClientRect();
+                const targetY = editorRect.height / 2;
+                const cursorY = coords.top - editorRect.top;
+                const offset = cursorY - targetY;
+                // Always scroll to center, not just when needed
+                if (Math.abs(offset) > 5) {
+                  scrollDOM.scrollTop += offset;
+                }
+              }
+            });
+          }
           // Synonym-Check bei Cursor-Bewegung (debounced)
           if(v.selectionSet && onSynonymRequest) {
             if(synonymDebounceRef.current) window.clearTimeout(synonymDebounceRef.current);
@@ -546,6 +602,26 @@ export const CodeMirrorEditor:React.FC<Props> = ({ value, onChange, command$, fi
     // Add scroll listener to editor's scroll container
     if (viewRef.current && onScroll) {
       viewRef.current.scrollDOM.addEventListener('scroll', handleScroll);
+    }
+    
+    // Typewriter sound handler
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!TypewriterSound.isEnabled()) return;
+      
+      // Ignore modifier-only keys and special keys
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Tab', 'Escape'].includes(e.key)) return;
+      
+      if (e.key === 'Enter') {
+        TypewriterSound.onEnter();
+      } else if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete') {
+        TypewriterSound.onKeyPress();
+      }
+    };
+    
+    // Add keydown listener for typewriter sounds
+    if (viewRef.current) {
+      viewRef.current.contentDOM.addEventListener('keydown', handleKeyDown);
     }
     
     // Initial proofreading checks
@@ -635,6 +711,44 @@ export const CodeMirrorEditor:React.FC<Props> = ({ value, onChange, command$, fi
         }
         return;
       }
+      
+      // Selection context menu - show when there's selected text or right-click anywhere
+      if (onSelectionContextMenu) {
+        const selection = viewRef.current.state.selection.main;
+        // Check if there's a selection
+        if (selection.from !== selection.to) {
+          e.preventDefault();
+          const selectedText = viewRef.current.state.sliceDoc(selection.from, selection.to);
+          onSelectionContextMenu({
+            text: selectedText,
+            from: selection.from,
+            to: selection.to,
+            x: e.clientX,
+            y: e.clientY
+          });
+          return;
+        }
+        // Or if right-clicking on a word (get the word under cursor)
+        const pos = viewRef.current.posAtCoords({ x: e.clientX, y: e.clientY });
+        if (pos !== null) {
+          const wordInfo = getWordAtCursor(viewRef.current, pos);
+          if (wordInfo && wordInfo.word.length > 0) {
+            e.preventDefault();
+            // Select the word in editor
+            viewRef.current.dispatch({
+              selection: { anchor: wordInfo.from, head: wordInfo.to }
+            });
+            onSelectionContextMenu({
+              text: wordInfo.word,
+              from: wordInfo.from,
+              to: wordInfo.to,
+              x: e.clientX,
+              y: e.clientY
+            });
+            return;
+          }
+        }
+      }
     };
     ref.current?.addEventListener('contextmenu', handleContextMenu);
     
@@ -723,6 +837,9 @@ export const CodeMirrorEditor:React.FC<Props> = ({ value, onChange, command$, fi
     return ()=>{ 
       if (viewRef.current?.scrollDOM) {
         viewRef.current.scrollDOM.removeEventListener('scroll', handleScroll);
+      }
+      if (viewRef.current?.contentDOM) {
+        viewRef.current.contentDOM.removeEventListener('keydown', handleKeyDown);
       }
       viewRef.current?.destroy(); 
       viewRef.current = null;
