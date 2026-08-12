@@ -3,7 +3,7 @@
 //! Dieses Modul enthält Legacy-Fallback bis vollständige Engine integriert ist.
 
 use std::sync::{Mutex, OnceLock};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use rand::{Rng, SeedableRng};
 use rand::rngs::StdRng;
 use std::sync::Arc;
@@ -151,10 +151,19 @@ pub fn begin_load(model: &str, resource_dir: Option<PathBuf>) -> bool {
         .and_then(|p| p.parent())
         .map(|p| p.join("resources"));
 
+    // `info.file` is repo-relative ("models/<id>"), while the user data dir is
+    // already the models directory - joining it verbatim would yield
+    // ".../models/models/<id>", so strip the prefix for that root.
+    let file_leaf = Path::new(info.file)
+        .strip_prefix("models")
+        .unwrap_or(Path::new(info.file));
+
     let possible_paths: Vec<PathBuf> = vec![
         dev_resource_root.as_ref().map(|root| root.join(info.file)),
         resource_dir.as_ref().map(|rd| rd.join(info.file)),
         Some(PathBuf::from("resources").join(info.file)),
+        // Downloaded/linked models in the user data directory.
+        downloader::get_models_dir().ok().map(|dir| dir.join(file_leaf)),
     ]
     .into_iter()
     .flatten()
@@ -165,6 +174,12 @@ pub fn begin_load(model: &str, resource_dir: Option<PathBuf>) -> bool {
     let path = match model_path {
         Some(p) => p,
         None => {
+            let tried = possible_paths
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            log::error!("[fontaine] model '{}' not found; tried: {}", resolved_model, tried);
             *st = LoadState::Error(format!("Modelldatei/-ordner nicht gefunden für '{}' (erwartet: {})", resolved_model, info.file));
             return true;
         }

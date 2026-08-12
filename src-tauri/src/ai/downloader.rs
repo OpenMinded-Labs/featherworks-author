@@ -259,6 +259,15 @@ fn update_status(status: DownloadStatus) {
     }
 }
 
+/// Strip the repo-relative `models/` prefix from a registry path.
+///
+/// `ModelInfo::file` is relative to the repository root ("models/<id>"), but
+/// `get_models_dir()` already points at the models directory - joining the two
+/// verbatim would produce ".../models/models/<id>".
+fn file_leaf(file: &str) -> &Path {
+    Path::new(file).strip_prefix("models").unwrap_or(Path::new(file))
+}
+
 /// Check if a model file exists
 pub fn model_exists(model_id: &str) -> bool {
     let Some(info) = registry::find(model_id) else {
@@ -273,7 +282,7 @@ pub fn model_exists(model_id: &str) -> bool {
     
     // Downloaded models - check in config dir
     if let Ok(models_dir) = get_models_dir() {
-        let path = models_dir.join(info.file);
+        let path = models_dir.join(file_leaf(info.file));
         if path.exists() {
             return true;
         }
@@ -301,7 +310,7 @@ pub fn get_model_path(model_id: &str, resource_dir: Option<PathBuf>) -> Option<P
     
     // Downloaded models - look in config dir
     if let Ok(models_dir) = get_models_dir() {
-        let path = models_dir.join(info.file);
+        let path = models_dir.join(file_leaf(info.file));
         if path.exists() {
             return Some(path);
         }

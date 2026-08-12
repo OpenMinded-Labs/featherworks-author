@@ -8,12 +8,20 @@
 use rusqlite::Connection;
 use std::collections::HashSet;
 
-/// Maximum characters for the full context (roughly 2000 tokens ≈ 6000 chars)
-const MAX_CONTEXT_CHARS: usize = 6000;
-/// Maximum characters per scene snippet
+/// Maximum characters per scene snippet (for *other* scenes, not the current one)
 const MAX_SCENE_SNIPPET: usize = 500;
 /// Maximum number of relevant scenes to include
 const MAX_RELEVANT_SCENES: usize = 3;
+
+/// Truncate at a char boundary. Slicing a `String` by byte index panics if the
+/// index lands inside a multi-byte character (umlauts, emoji, ...), so never
+/// use `&s[..n]` directly on user text.
+fn truncate_chars(s: &str, max_chars: usize) -> String {
+    match s.char_indices().nth(max_chars) {
+        Some((byte_idx, _)) => format!("{}...", &s[..byte_idx]),
+        None => s.to_string(),
+    }
+}
 
 /// Entity from the database
 #[derive(Debug, Clone)]
@@ -74,30 +82,23 @@ impl FontaineContext {
                     entry.push_str(&format!(", auch bekannt als: {}", entity.aliases));
                 }
                 if !entity.description.is_empty() {
-                    // Show full description (up to 500 chars) for relevant entities
-                    let max_desc = if is_relevant { 500 } else { 150 };
-                    let desc = if entity.description.len() > max_desc {
-                        format!("{}...", &entity.description[..max_desc])
-                    } else {
-                        entity.description.clone()
-                    };
+                    // Full description for entities named in the query, generous
+                    // excerpt for the rest.
+                    let max_desc = if is_relevant { 1500 } else { 400 };
+                    let desc = truncate_chars(&entity.description, max_desc);
                     entry.push_str(&format!(": {}", desc));
                 }
                 parts.push(entry);
             }
         }
         
-        // Current scene
+        // Current scene — always included in FULL. This is the primary material
+        // the user is asking about; truncating it makes the model answer as if it
+        // had only seen the opening paragraphs.
         if let Some(ref content) = self.current_scene {
             let title = self.current_scene_title.as_deref().unwrap_or("Aktuelle Szene");
             parts.push(format!("\n📄 {}:", title));
-            // Truncate if too long
-            let max_current = MAX_CONTEXT_CHARS / 2;
-            if content.len() > max_current {
-                parts.push(format!("{}...[gekürzt]", &content[..max_current]));
-            } else {
-                parts.push(content.clone());
-            }
+            parts.push(content.clone());
         }
         
         // Relevant scenes from other parts of the book
@@ -435,11 +436,7 @@ fn find_best_snippet(content: &str, keywords: &[String]) -> String {
         snippet
     } else {
         // No keyword found, return beginning of content
-        if content.len() > MAX_SCENE_SNIPPET {
-            format!("{}...", &content[..MAX_SCENE_SNIPPET])
-        } else {
-            content.to_string()
-        }
+        truncate_chars(content, MAX_SCENE_SNIPPET)
     }
 }
 
@@ -483,11 +480,7 @@ fn get_relevant_rag_snippets(
         if score > 0 {
             // Find a relevant snippet
             let snippet = find_best_snippet(&content, keywords);
-            let truncated = if snippet.len() > MAX_RAG_SNIPPET {
-                format!("{}...", &snippet[..MAX_RAG_SNIPPET])
-            } else {
-                snippet
-            };
+            let truncated = truncate_chars(&snippet, MAX_RAG_SNIPPET);
             results.push((name, truncated, score));
         }
     }
@@ -532,5 +525,34 @@ mod tests {
         let snippet = find_best_snippet(content, &keywords);
         assert!(snippet.contains("Herbert"));
         assert!(snippet.contains("Augen"));
+    }
+
+    #[test]
+    fn truncate_chars_does_not_split_multibyte() {
+        // Cutting at char 3 must land after "üäö", not inside a byte sequence.
+        let s = "üäöü";
+        assert_eq!(truncate_chars(s, 3), "üäö...");
+        // Shorter than the limit -> returned verbatim, no ellipsis.
+        assert_eq!(truncate_chars(s, 99), "üäöü");
+        assert_eq!(truncate_chars("", 10), "");
+    }
+
+    #[test]
+    fn current_scene_is_never_truncated() {
+        let long_scene = "Ä".repeat(50_000);
+        let ctx = FontaineContext {
+            project_title: "Test".to_string(),
+            entities: vec![],
+            current_scene: Some(long_scene.clone()),
+            current_scene_title: Some("Szene 1".to_string()),
+            relevant_scenes: vec![],
+            rag_documents: vec![],
+            knowledge_snippets: vec![],
+            total_chars: 0,
+        };
+
+        let prompt = ctx.to_prompt_context(None);
+        assert!(prompt.contains(&long_scene), "scene must be passed in full");
+        assert!(!prompt.contains("[gekürzt]"));
     }
 }

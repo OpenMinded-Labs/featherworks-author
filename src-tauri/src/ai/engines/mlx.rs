@@ -173,8 +173,9 @@ impl ModelLoader for MlxEngine {
         // Requires mlx-lm in the resolved Python environment (see python_executable).
         let gemma_prompt = normalize_prompt_for_gemma(prompt);
         let token_budget = token_budget_for(max_tokens);
+        let python = python_executable();
 
-        let output = Command::new(python_executable())
+        let output = Command::new(&python)
             .arg("-m")
             .arg("mlx_lm")
             .arg("generate")
@@ -191,6 +192,16 @@ impl ModelLoader for MlxEngine {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            // The most common failure is a Python without mlx-lm; say so
+            // explicitly instead of surfacing a raw ImportError.
+            if stderr.contains("No module named mlx_lm") {
+                return Err(anyhow!(
+                    "MLX-Runtime nicht gefunden: '{}' hat kein mlx-lm installiert. \
+                     Erwartet wird die Projekt-venv '.venv-mlx' \
+                     (oder setze FONTAINE_PYTHON auf einen Interpreter mit mlx-lm).",
+                    python
+                ));
+            }
             return Err(anyhow!(
                 "MLX inference failed (exit={}): {}",
                 output.status,
@@ -286,12 +297,23 @@ fn python_executable() -> String {
         }
     }
 
-    for candidate in venv_candidates() {
+    let candidates = venv_candidates();
+    for candidate in &candidates {
         if candidate.exists() {
             return candidate.to_string_lossy().to_string();
         }
     }
 
+    // Falling back to system python almost always fails (no mlx_lm installed),
+    // so log the searched locations to make the cause obvious.
+    log::warn!(
+        "[fontaine/mlx] no .venv-mlx found, falling back to system python3. Searched: {}",
+        candidates
+            .iter()
+            .map(|p| p.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
     "python3".to_string()
 }
 
@@ -300,22 +322,31 @@ fn venv_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     const VENV_REL: &str = ".venv-mlx/bin/python";
 
-    // Walk up from the executable location (dev: target/debug/<bin>)
+    // Walk up from the executable. Depth must cover the deepest layout, which
+    // is the macOS bundle in a debug tree:
+    //   <repo>/src-tauri/target/release/bundle/macos/<App>.app/Contents/MacOS
+    // That is 8 levels from the binary to the repository root.
     if let Ok(exe) = std::env::current_exe() {
         let mut dir = exe.parent().map(|p| p.to_path_buf());
-        for _ in 0..5 {
+        for _ in 0..10 {
             let Some(current) = dir else { break };
             candidates.push(current.join(VENV_REL));
             dir = current.parent().map(|p| p.to_path_buf());
         }
     }
 
-    // Current working directory (dev server / cargo run)
+    // Current working directory (dev server / cargo run). A bundled app is
+    // launched with cwd="/", so this only helps during development.
     if let Ok(cwd) = std::env::current_dir() {
         candidates.push(cwd.join(VENV_REL));
         if let Some(parent) = cwd.parent() {
             candidates.push(parent.join(VENV_REL));
         }
+    }
+
+    // User data directory - where an installed runtime would live.
+    if let Some(config) = dirs::config_dir() {
+        candidates.push(config.join("featherworks-author").join(VENV_REL));
     }
 
     candidates
@@ -324,6 +355,18 @@ fn venv_candidates() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The macOS bundle sits 8 levels below the repository root, so a shallow
+    /// walk silently falls back to system python (which lacks mlx-lm).
+    #[test]
+    fn venv_search_reaches_repo_root_from_bundled_app() {
+        let candidates = venv_candidates();
+        assert!(
+            candidates.len() >= 10,
+            "walk-up depth too shallow: {} candidates",
+            candidates.len()
+        );
+    }
 
     #[test]
     fn plain_text_becomes_single_user_turn() {

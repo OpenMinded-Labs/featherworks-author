@@ -121,7 +121,7 @@ Analysiere diesen Text auf Probleme:
 
 Text zur Analyse:
 """
-${text.substring(0, 2500)}
+${text}
 """
 
 Gib mir eine nummerierte Liste der Probleme.<|end|>
@@ -141,7 +141,7 @@ Analyze this text for problems:
 
 Text to analyze:
 """
-${text.substring(0, 2500)}
+${text}
 """
 
 Give me a numbered list of problems.<|end|>
@@ -151,8 +151,8 @@ Here are the problems found:
 1.`,
 
   agent: (text: string, context: string) => {
-    // Kürze Kontext für lokales Model (max 1000 Zeichen)
-    const shortContext = context.length > 1000 ? context.substring(0, 1000) + '...' : context;
+    // Kein Kürzen - das Backend budgetiert den Kontext bereits.
+    const shortContext = context;
     
     return lang.startsWith('de') ? `<|system|>
 Du bist ein Schreibassistent. Analysiere die Szene und gib strukturiertes Feedback.
@@ -170,7 +170,7 @@ Analysiere diese Szene auf:
 
 Szene:
 """
-${text.substring(0, 2000)}
+${text}
 """
 
 Gib strukturiertes Feedback.<|end|>
@@ -193,7 +193,7 @@ Analyze this scene for:
 
 Scene:
 """
-${text.substring(0, 2000)}
+${text}
 """
 
 Give structured feedback.<|end|>
@@ -204,30 +204,32 @@ Give structured feedback.<|end|>
   },
 
   chat: (question: string, context: string, userName?: string) => {
-    // Kürze Kontext für lokales Model (max 1500 Zeichen)
-    const shortContext = context.length > 1500 ? context.substring(0, 1500) + '...' : context;
+    // Kein Kürzen: Das Backend (ai/context.rs) stellt den Kontext bereits
+    // budgetiert zusammen und liefert die aktuelle Szene vollständig.
+    // Gemma 4 hat 128k Kontext - ein Limit hier würde die Szene abschneiden.
+    const shortContext = context;
     
     return lang.startsWith('de') ? `<|system|>
 Du bist Fontaine, ein freundlicher Schreibassistent für einen Roman.
 Nutze den KONTEXT unten, um Fragen über Charaktere, Handlung und Szenen zu beantworten.
-Antworte KURZ (2-4 Sätze). Schreibe KEINE Geschichten!
+Beziehe dich konkret auf den Text. Schreibe KEINE Geschichten weiter, wenn nicht danach gefragt wird.
 
 KONTEXT:
 ${shortContext}
 <|end|>
 <|user|>
-${userName ? `Ich bin ${userName}. ` : ''}${question.substring(0, 500)}<|end|>
+${userName ? `Ich bin ${userName}. ` : ''}${question}<|end|>
 <|assistant|>
 ` : `<|system|>
 You are Fontaine, a friendly writing assistant for a novel.
 Use the CONTEXT below to answer questions about characters, plot, and scenes.
-Answer BRIEFLY (2-4 sentences). Do NOT write stories!
+Refer concretely to the text. Do NOT continue the story unless asked to.
 
 CONTEXT:
 ${shortContext}
 <|end|>
 <|user|>
-${userName ? `I am ${userName}. ` : ''}${question.substring(0, 500)}<|end|>
+${userName ? `I am ${userName}. ` : ''}${question}<|end|>
 <|assistant|>
 `;
   }
@@ -678,7 +680,7 @@ Du bist ein Schreibassistent. Gib KURZE, prägnante Analyse (max 3-4 Punkte).
 <|user|>
 Analysiere diese Passage kurz:
 """
-${text.substring(0, 1500)}
+${text}
 """
 
 Gib mir:
@@ -695,7 +697,7 @@ You are a writing assistant. Give SHORT, concise analysis (max 3-4 points).
 <|user|>
 Briefly analyze this passage:
 """
-${text.substring(0, 1500)}
+${text}
 """
 
 Give me:
@@ -1017,11 +1019,8 @@ Give me:
       const parts: string[] = [];
       if (projectTitle) parts.push(`Projekt: ${projectTitle}`);
       if (sceneContent) {
-        const maxChars = 2000;
-        const truncated = sceneContent.length > maxChars 
-          ? sceneContent.substring(0, maxChars) + '...[gekürzt]'
-          : sceneContent;
-        parts.push(`Aktuelle Szene:\n${truncated}`);
+        // Szene vollständig - sie ist das Material, um das es geht.
+        parts.push(`Aktuelle Szene:\n${sceneContent}`);
       }
       return parts.join('\n');
     }

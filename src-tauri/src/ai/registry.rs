@@ -55,8 +55,11 @@ pub static REGISTRY: &[ModelInfo] = &[
         // encoders were ~0.95 GB of dead weight.
         file: "models/gemma-4-e2b-mlx-q6-text", 
         kind: ModelKind::Gemma4E2B,
-        // Gemma 4 handles long context well; give it generous room.
-        params: ModelParams { ctx: 65536, temperature: 0.7, top_p: 0.9, repeat_penalty: 1.1, gpu_layers: 99 },
+        // 131072 per the model's own config.json (max_position_embeddings).
+        // 30 of 35 layers use sliding attention (window 512), 5 use full
+        // attention - so long context is cheap on KV cache but recall across
+        // the full span is untested. See docs/LLM-STATUS.md.
+        params: ModelParams { ctx: 131072, temperature: 0.7, top_p: 0.9, repeat_penalty: 1.1, gpu_layers: 99 },
         size_bytes: 3_760_000_000,
         ram_required_mb: 6144,
         is_bundled: true,

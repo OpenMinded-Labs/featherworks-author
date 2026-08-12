@@ -60,7 +60,7 @@ Ground Truth: `test_buecher/zusammenfassungen/martyria1_gemini.json`
 | QA | brauchbar, zu abstrakt |
 
 **Wichtig:** Die Zusammenfassungs-Schwäche ist vermutlich ein **Testartefakt** —
-der Harness schneidet bei 8000 Zeichen ab, Kapitel 1 hat 34.193. Bei 65k Kontext
+der Harness schneidet bei 8000 Zeichen ab, Kapitel 1 hat 34.193. Bei 128k Kontext
 unnötig. Vor jeder Modell-Kritik erst mit vollem Kapitel gegenmessen.
 
 Aussagekraft begrenzt: ein Werk, n=5. Die Ausfälle waren Fantasy-Namen
@@ -111,6 +111,40 @@ Blocker:
 → Erfordert eigene MLX-Implementierung (4 Layer + Fusion + Verify-Loop)
 oder Wechsel auf llama.cpp/GGUF, wo die Kopplung fertig ist
 (`Architecture: gemma4-assistant`).
+
+### 4. Kontext-Kuratierung statt harter Limits
+
+Die aktuelle Szene geht seit `context.rs` ungekürzt in den Prompt. Bei
+Entitäten reicht das Prinzip „alles rein" aber nicht — ein Projekt mit 80
+Figuren füllt den Kontext mit Irrelevantem.
+
+Geplant:
+
+- **Heuristische Vorfilterung**, welche Entitäten das Modell überhaupt sieht
+  (Nennung in der Szene, Nennung in der Frage, Beziehungsnähe).
+- **Tool-Use für RAG-Suche**: Gemma 4 E2B ist tool-use-fähig. Statt Kontext
+  vorab zu raten, sucht das Modell selbst nach Bedarf.
+- **Vektor-Store auf LanceDB** statt Chroma (embedded, keine Server-Runtime —
+  passt zum Auslieferungsproblem).
+- **Knowledge Graph**, den das Modell selbst pflegt. Bei narrativen Büchern
+  besonders wertvoll: Figurenbeziehungen, Zeitlinien, Orte über Bände hinweg.
+
+### 5. KV-Cache auf 4 Bit quantisieren
+
+Reduziert den Speicherbedarf bei langen Kontexten deutlich. Relevant, sobald
+ganze Szenen + Summaries regelmäßig im Prompt stehen.
+
+### 6. Agenting
+
+Autonomes Arbeiten, User-Interrupts, Task-Unterbrechung. Referenzimplemen-
+tierung: **Ailey** (System des Autors) — Konzepte dort abschauen statt neu
+erfinden.
+
+### 7. Kleinkram
+
+- Icons auf **Lucide** umstellen (optisch konsistenter).
+- Thinking-Task-Flag: Primer bei Entity-Extraktion an, bei Lektorat aus.
+- Python-Runtime beim Kunden (Blocker für Release, siehe oben).
 
 ## Pfade
 
