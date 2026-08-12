@@ -6,11 +6,30 @@ Dieses Dokument enthält die tatsächlich offenen Aufgaben und nächsten Schritt
 
 ---
 
+## 🧠 Fontaine / LLM
+
+Details, Messwerte und verifizierte Fallstricke: **`docs/LLM-STATUS.md`**
+
+- [ ] **Modell beim App-Start laden und resident halten** (abschaltbar)
+  - Aktuell startet pro Anfrage ein Python-Prozess (~2–3 s Ladezeit)
+  - `mlx_lm.server` als Hintergrundprozess, HTTP statt Subprocess
+- [ ] **Szenen-KV-Cache für TTFS**
+  - Kontext ist Szene + Summaries vorangegangener Kapitel
+  - Setzt stabiles Prompt-Präfix voraus (Instruktion ans Ende)
+  - Sliding Window (512, 30/35 Layer) macht Persistenz heikel — erst messen
+- [ ] **EAGLE/MTP-Draft-Head** für ~2× Speed
+  - Modell liegt bereits: `resources/models/gemma-4-e2b-assistant-mtp`
+  - Braucht eigene MLX-Implementierung oder Wechsel auf llama.cpp/GGUF
+- [ ] Thinking-Primer als Task-Flag (Extraktion an, Lektorat aus)
+- [ ] Evaluation über mehrere Werke statt nur Martyria 1
+
+---
+
 ## 🔴 Kritisch (vor Release)
 
 ### Lizenzen
 - [ ] "Über" Dialog oder Settings mit Lizenzen
-  - Phi-3-mini: MIT License (Microsoft)
+  - Gemma 4 E2B: Apache 2.0 License (Google)
   - Mistral-7B: Apache 2.0 License
   - Andere Dependencies (React, Tauri, etc.)
 

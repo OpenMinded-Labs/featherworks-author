@@ -117,7 +117,7 @@ export const AutoParagraphDialog: React.FC<AutoParagraphDialogProps> = ({
       
       // Model not loaded - initiate load
       console.log('[AutoParagraph] Initiating model load...');
-      await invoke('load_ai_model', { name: 'phi-3-mini' });
+      await invoke('load_ai_model', { name: 'gemma-4-e2b-mlx-q6' });
       
       // Wait for loading to complete
       for (let i = 0; i < 120; i++) {

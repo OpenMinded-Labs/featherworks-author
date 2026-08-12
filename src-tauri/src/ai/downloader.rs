@@ -273,8 +273,13 @@ pub fn model_exists(model_id: &str) -> bool {
     
     // Downloaded models - check in config dir
     if let Ok(models_dir) = get_models_dir() {
-        let path = models_dir.join(format!("{}.gguf", model_id));
-        return path.exists();
+        let path = models_dir.join(info.file);
+        if path.exists() {
+            return true;
+        }
+        // Legacy fallback naming
+        let legacy = models_dir.join(format!("{}.gguf", model_id));
+        return legacy.exists();
     }
     
     false
@@ -296,9 +301,14 @@ pub fn get_model_path(model_id: &str, resource_dir: Option<PathBuf>) -> Option<P
     
     // Downloaded models - look in config dir
     if let Ok(models_dir) = get_models_dir() {
-        let path = models_dir.join(format!("{}.gguf", model_id));
+        let path = models_dir.join(info.file);
         if path.exists() {
             return Some(path);
+        }
+        // Legacy fallback naming
+        let legacy = models_dir.join(format!("{}.gguf", model_id));
+        if legacy.exists() {
+            return Some(legacy);
         }
     }
     

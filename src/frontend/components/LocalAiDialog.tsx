@@ -166,7 +166,7 @@ export const LocalAiDialog: React.FC<Props> = ({ isOpen, onClose }) => {
           <div className="local-ai-icon">🤖</div>
           <div className="local-ai-title-section">
             <h2 className="local-ai-title">{t('localAi.title', 'Lokale KI verwalten')}</h2>
-            <p className="local-ai-subtitle">{t('localAi.subtitle', 'Phi-3 Mini · Offline-Textverarbeitung')}</p>
+            <p className="local-ai-subtitle">{t('localAi.subtitle', 'Gemma 4 E2B (MLX) · Offline-Textverarbeitung')}</p>
           </div>
         </div>
         
@@ -186,11 +186,11 @@ export const LocalAiDialog: React.FC<Props> = ({ isOpen, onClose }) => {
                   <div className="model-info">
                     <div className="model-name">
                       <span className="model-icon">🧠</span>
-                      Phi-3 Mini 128K Instruct
+                      Gemma 4 E2B Instruct
                     </div>
                     <div className="model-details">
-                      <span className="model-size">~2.4 GB</span>
-                      <span className="model-type">GGUF Q4_K_M</span>
+                      <span className="model-size">~2.2 GB</span>
+                      <span className="model-type">MLX Q6</span>
                     </div>
                   </div>
                   

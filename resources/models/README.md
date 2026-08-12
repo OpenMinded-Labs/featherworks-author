@@ -2,7 +2,16 @@
 
 Leg hier deine lokalen Modelle ab. Beim Build werden sie gebundled (siehe `tauri.conf.json`).
 
-Aktuell erkennt der Code automatisch folgendes:
-- `models/phi-3-mini/phi-3-mini.gguf` (oder *-q4.gguf, *.onnx)
+## Standardmodell (macOS / Apple Silicon)
 
-Beachte die Paketgröße. Für große Modelle evtl. später Download-on-demand integrieren.
+- **ID:** `gemma-4-e2b-mlx-q6`
+- **Runtime:** MLX
+- **Pfad:** `models/gemma-4-e2b-mlx-q6/` (Ordner mit `config.json`, `model.safetensors`, `tokenizer.json`)
+
+## Fallback (Windows / Linux)
+
+- **ID:** `mistral-7b`
+- **Runtime:** llama.cpp
+- **Pfad:** `models/mistral-7b-instruct-v0.3-q4_k_m.gguf`
+
+Beachte die Paketgröße. Für große Modelle empfiehlt sich Download-on-demand.

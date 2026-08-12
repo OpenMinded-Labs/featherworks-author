@@ -607,7 +607,7 @@ export const FontainePanel: React.FC<FontainePanelProps> = ({
           setModelStatus('loading');
           console.log('[Fontaine] Auto-loading AI model...');
           try {
-            await invoke('load_ai_model', { name: 'phi-3-mini' });
+            await invoke('load_ai_model', { name: 'gemma-4-e2b-mlx-q6' });
             // Check again after loading
             const newState = await invoke<{ state: string }>('get_ai_model_state');
             if (newState.state === 'ready') {
@@ -1472,7 +1472,7 @@ Give me:
       case 'openai':
         return { name: 'GPT', icon: '🟢', model: providerSettings?.openai_model || 'gpt-4o' };
       default:
-        return { name: 'Lokal', icon: '💻', model: 'Phi-3 Mini' };
+        return { name: 'Lokal', icon: '💻', model: 'Gemma 4 E2B (MLX)' };
     }
   };
 

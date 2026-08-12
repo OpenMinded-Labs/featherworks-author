@@ -74,7 +74,7 @@ pub struct EditorSettings {
 pub struct AiSettings {
     /// Is AI functionality enabled? (User can completely disable)
     pub enabled: bool,
-    /// Currently selected model ID (phi-3-mini or ministral-8b)
+    /// Currently selected model ID (e.g. gemma-4-e2b-mlx-q6 or mistral-7b)
     pub model_id: String,
     /// Generation temperature (0.0 - 1.0)
     pub temperature: f32,
@@ -88,7 +88,7 @@ impl Default for AiSettings {
     fn default() -> Self {
         Self {
             enabled: true,                          // AI enabled by default
-            model_id: "phi-3-mini".to_string(),     // Phi-3 is the default
+            model_id: "gemma-4-e2b-mlx-q6".to_string(), // Gemma 4 E2B (MLX) is the default
             temperature: 0.7,
             max_tokens: 512,
             auto_load: true,
@@ -958,7 +958,14 @@ pub fn load_ai_settings(conn: &Connection) -> Result<AiSettings, DatabaseOperati
     let defaults = AiSettings::default();
     Ok(AiSettings {
         enabled: map.get("enabled").and_then(|s| s.parse().ok()).unwrap_or(defaults.enabled),
-        model_id: map.get("model_id").cloned().unwrap_or(defaults.model_id),
+        model_id: {
+            let raw = map.get("model_id").cloned().unwrap_or(defaults.model_id.clone());
+            // Migrate legacy model IDs to the new MLX default
+            match raw.as_str() {
+                "phi-3-mini" | "phi-3-mini-128k" | "ministral-8b" => "gemma-4-e2b-mlx-q6".to_string(),
+                _ => raw,
+            }
+        },
         temperature: map.get("temperature").and_then(|s| s.parse().ok()).unwrap_or(defaults.temperature),
         max_tokens: map.get("max_tokens").and_then(|s| s.parse().ok()).unwrap_or(defaults.max_tokens),
         auto_load: map.get("auto_load").and_then(|s| s.parse().ok()).unwrap_or(defaults.auto_load),

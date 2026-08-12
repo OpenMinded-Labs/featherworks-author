@@ -154,7 +154,7 @@
   "about.allRightsReserved": "Alle Rechte vorbehalten.",
   
   "localAi.title": "Lokale KI verwalten",
-  "localAi.subtitle": "Phi-3 Mini · Offline-Textverarbeitung",
+  "localAi.subtitle": "Gemma 4 E2B (MLX) · Offline-Textverarbeitung",
   "localAi.loading": "Lade Einstellungen...",
   "localAi.modelStatus": "Modell-Status",
   "localAi.checking": "Prüfe...",

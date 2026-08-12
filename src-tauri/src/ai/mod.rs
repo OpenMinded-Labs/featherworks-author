@@ -9,7 +9,8 @@ use rand::rngs::StdRng;
 use std::sync::Arc;
 use crate::ai::loader::ModelLoader;
 use crate::ai::engines::llamacpp::LlamaCppEngine;
-use crate::ai::registry::ModelInfo;
+use crate::ai::engines::mlx::MlxEngine;
+use crate::ai::registry::{ModelInfo, RuntimeKind};
 cfg_if::cfg_if! {
     if #[cfg(feature="local-llm")] {
         // llama-cpp-2 crate integration for local inference
@@ -95,6 +96,13 @@ pub mod tokenizer;
 pub mod registry; // (einmalig)
 pub mod engines;
 
+fn resolve_model_alias(model: &str) -> String {
+    match model {
+        "phi-3-mini" | "phi-3-mini-128k" => "gemma-4-e2b-mlx-q6".to_string(),
+        _ => model.to_string(),
+    }
+}
+
 pub fn list_local_models(resource_dir: Option<PathBuf>) -> Vec<String> {
     let mut models: Vec<String> = registry::REGISTRY.iter().map(|m| m.id.to_string()).collect();
     if let Some(dir) = resource_dir { models.retain(|id| registry::find(id).map(|mi| dir.join(mi.file).exists()).unwrap_or(false)); }
@@ -117,90 +125,95 @@ static MODEL_PROGRESS: OnceLock<Mutex<Option<f32>>> = OnceLock::new();
 fn model_progress() -> &'static Mutex<Option<f32>> { MODEL_PROGRESS.get_or_init(|| Mutex::new(None)) }
 
 pub fn begin_load(model: &str, resource_dir: Option<PathBuf>) -> bool {
-    log::info!("[fontaine] begin_load called for model '{}', resource_dir: {:?}", model, resource_dir);
+    let resolved_model = resolve_model_alias(model);
+    log::info!("[fontaine] begin_load called for model '{}' (resolved='{}'), resource_dir: {:?}", model, resolved_model, resource_dir);
     
     let mut st = model_state().lock().ok().unwrap();
     match &*st {
         LoadState::Loading => return false,
-        LoadState::Ready if get_current_model().as_deref()==Some(model) => return false,
+        LoadState::Ready if get_current_model().as_deref()==Some(resolved_model.as_str()) => return false,
         _ => {}
     }
     *st = LoadState::Loading;
-    
-    // Try multiple paths to find the model
-    let model_subpath = "models/phi-3-mini-128K-Instruct_q4_k_m.gguf";
-    
-    // For development: go up from target/debug to find resources/
-    let dev_resources = resource_dir.as_ref()
-        .and_then(|rd| rd.parent())  // target
-        .and_then(|p| p.parent())    // src-tauri
-        .and_then(|p| p.parent())    // project root
-        .map(|p| p.join("resources").join(model_subpath));
-    
+
+    let info = match registry::find(&resolved_model) {
+        Some(i) => i,
+        None => {
+            *st = LoadState::Error(format!("Unbekanntes Modell: {}", resolved_model));
+            return true;
+        }
+    };
+
+    // Resolve path candidates for bundled/local models
+    let dev_resource_root = resource_dir.as_ref()
+        .and_then(|rd| rd.parent())
+        .and_then(|p| p.parent())
+        .and_then(|p| p.parent())
+        .map(|p| p.join("resources"));
+
     let possible_paths: Vec<PathBuf> = vec![
-        // 1. Dev mode: project_root/resources/models/...
-        dev_resources,
-        // 2. Resource dir from Tauri (bundled app)
-        resource_dir.as_ref().map(|rd| rd.join(model_subpath)),
-        // 3. Direct resources folder (development, CWD-relative)
-        Some(PathBuf::from("resources").join(model_subpath)),
-        // 4. Absolute path for development
-        Some(PathBuf::from("/Users/simonvandeloo/Desktop/featherworks-author/resources").join(model_subpath)),
-    ].into_iter().flatten().collect();
-    
-    log::info!("[fontaine] Searching for model in paths: {:?}", possible_paths);
-    
-    let model_path = possible_paths.iter().find(|p| p.exists());
-    
-    if model == "phi-3-mini-128k" || model == "phi-3-mini" {
-        let path = match model_path {
-            Some(p) => p.clone(),
-            None => {
-                log::error!("[fontaine] Model file not found in any path!");
-                *st = LoadState::Error("Modelldatei nicht gefunden (phi-3-mini-128K-Instruct_q4_k_m.gguf)".into()); 
-                return true;
+        dev_resource_root.as_ref().map(|root| root.join(info.file)),
+        resource_dir.as_ref().map(|rd| rd.join(info.file)),
+        Some(PathBuf::from("resources").join(info.file)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+
+    let model_path = possible_paths.iter().find(|p| p.exists()).cloned();
+
+    let path = match model_path {
+        Some(p) => p,
+        None => {
+            *st = LoadState::Error(format!("Modelldatei/-ordner nicht gefunden für '{}' (erwartet: {})", resolved_model, info.file));
+            return true;
+        }
+    };
+
+    if let Ok(mut prog)=model_progress().lock() { *prog = Some(0.5); }
+
+    if let Ok(mut mm)=global().lock() {
+        mm.instance = Some(ModelInstance::Llama(LlamaCtx{
+            model_name: resolved_model.clone(),
+            _path: path.to_string_lossy().to_string(),
+            seed: 42,
+            simulated: false
+        }));
+
+        let loader_result: Result<Box<dyn ModelLoader>, String> = match info.runtime {
+            RuntimeKind::Mlx => {
+                let mut engine = MlxEngine::new();
+                match engine.load(&info, std::path::Path::new(&path)) {
+                    Ok(()) => Ok(Box::new(engine)),
+                    Err(e) => Err(format!("MLX load failed: {}", e)),
+                }
+            }
+            RuntimeKind::LlamaCpp => {
+                let mut engine = LlamaCppEngine::new();
+                match engine.load(&info, std::path::Path::new(&path)) {
+                    Ok(()) => Ok(Box::new(engine)),
+                    Err(e) => Err(format!("llama.cpp load failed: {}", e)),
+                }
             }
         };
-        
-        log::info!("[fontaine] Found model at: {:?}", path);
-        
-        // Skip hash verification for faster loading (2.2GB file takes too long)
-        // TODO: Add async hash verification later
-        if let Ok(mut prog)=model_progress().lock() { *prog = Some(0.5); }
-        
-        if let Ok(mut mm)=global().lock() {
-            mm.instance = Some(ModelInstance::Llama(LlamaCtx{ model_name: model.to_string(), _path: path.to_string_lossy().to_string(), seed: 42, simulated: false }));
-            
-            // Loader / Engine Setup - this is where the REAL model loading happens
-            if let Some(info) = registry::find(model) {
-                log::info!("[fontaine] Loading LlamaCppEngine with model info: {:?}", info.id);
-                let mut engine = LlamaCppEngine::new();
-                
-                // Load model with proper error handling
-                match engine.load(&info, std::path::Path::new(&path)) {
-                    Ok(()) => {
-                        log::info!("[fontaine] LlamaCppEngine loaded successfully, ready={}", engine.is_ready());
-                        let arc = Arc::new(Mutex::new(Box::new(engine) as Box<dyn ModelLoader>));
-                        mm.loader = Some(arc);
-                        mm.model_info = Some(info);
-                    }
-                    Err(e) => {
-                        log::error!("[fontaine] Failed to load LlamaCppEngine: {}", e);
-                        // Still set instance for fallback simulation
-                    }
-                }
-            } else {
-                log::error!("[fontaine] Model '{}' not found in registry", model);
+
+        match loader_result {
+            Ok(loader) => {
+                mm.loader = Some(Arc::new(Mutex::new(loader)));
+                mm.model_info = Some(info);
+            }
+            Err(e) => {
+                log::error!("[fontaine] {}", e);
+                *st = LoadState::Error(e);
+                return true;
             }
         }
-        
-        if let Ok(mut prog)=model_progress().lock() { *prog = Some(1.0); }
-        log::info!("[fontaine] Model 'phi-3-mini-128k' loading complete");
-    } else {
-        if let Ok(mut mm)=global().lock() { mm.instance = Some(ModelInstance::Simulated); mm.loader=None; mm.model_info=None; }
     }
+
+    if let Ok(mut prog)=model_progress().lock() { *prog = Some(1.0); }
+    log::info!("[fontaine] Model '{}' loading complete", resolved_model);
     *st = LoadState::Ready;
-    set_current_model(model);
+    set_current_model(&resolved_model);
     true
 }
 
@@ -299,7 +312,7 @@ pub fn generate_tokens_for_prompt(prompt:&str, max_tokens: usize) -> Vec<String>
             }
         } else {
             log::error!("[fontaine] No loader available - model not loaded");
-            return vec!["[LLM_ERROR: No LLM model loaded. Check if phi-3-mini-128K-Instruct_q4_k_m.gguf exists in resources/models/]".to_string()];
+            return vec!["[LLM_ERROR: No LLM model loaded. Check local model artifacts in resources/models/.]".to_string()];
         }
     }
     log::error!("[fontaine] Failed to lock model manager");

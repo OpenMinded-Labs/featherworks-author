@@ -48,11 +48,11 @@ interface DownloadProgress {
 
 // Model descriptions for tooltips
 const MODEL_DESCRIPTIONS: Record<string, { description: string; pros: string[]; cons: string[]; source: string }> = {
-  'phi-3-mini': {
-    description: 'Kompaktes, schnelles Modell von Microsoft. Ideal für Lektorat und kürzere Texte.',
-    pros: ['Schnell', 'Wenig RAM', 'Gute Deutsch-Unterstützung'],
-    cons: ['Kürzeres Kontextfenster', 'Weniger kreativ bei langen Texten'],
-    source: 'Microsoft / HuggingFace',
+  'gemma-4-e2b-mlx-q6': {
+    description: 'Kompaktes, schnelles Gemma-Modell im MLX-Format. Optimiert für Apple Silicon.',
+    pros: ['Sehr schnell auf Apple Silicon', 'Geringer Speicherbedarf', 'Gute Deutsch-Unterstützung'],
+    cons: ['Nur auf macOS (Apple Silicon)', 'Benötigt mlx-lm'],
+    source: 'Google / MLX Community',
   },
   'mistral-7b': {
     description: 'Leistungsstarkes Open-Source-Modell von Mistral AI. Besser für längere, kreative Texte.',

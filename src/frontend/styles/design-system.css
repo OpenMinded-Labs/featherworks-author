@@ -6877,6 +6877,20 @@ input:hover, textarea:hover, select:hover {
   overflow: auto !important;
 }
 
+/* ============================================
+   TYPEWRITER MODE - Option 3: CSS Padding + scrollIntoView
+   Allows any line (including first/last) to be centered
+   ============================================ */
+.typewriter-mode .cm-content {
+  padding-top: 50vh !important;
+  padding-bottom: 50vh !important;
+}
+
+/* Smooth but fast scroll for typewriter centering */
+.typewriter-mode .cm-scroller {
+  scroll-behavior: auto;  /* Instant scroll for typing - 'smooth' feels laggy */
+}
+
 /* Tool drawer content scrollable */
 .tool-drawer-content {
   overflow-y: auto !important;

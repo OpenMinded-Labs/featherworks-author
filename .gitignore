@@ -1,8 +1,20 @@
 node_modules/
 src-tauri/target/
 .DS_Store
+
+# Model weights (GB-sized, fetched via scripts/fetch_gemma_mlx.py)
 resources/models/*.gguf
 resources/models/phi-3-mini/
+resources/models/gemma-4-e2b-mlx-q6-text/
+resources/models/gemma-4-e2b-assistant-mtp/
+src-tauri/resources/models/*.gguf
+
+# Python venv for the MLX runtime
+.venv-mlx/
+
+# Private manuscripts used for evaluation - never commit
+test_buecher/
+
 *.fwauthor
 dist/
 .vite/

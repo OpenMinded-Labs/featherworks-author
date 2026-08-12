@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 APP_NAME="FeatherWorks Author"
-BINARY_PATH="src-tauri/target/release/$APP_NAME"
+# Cargo emits the crate name from Cargo.toml (underscored), not the display name.
+BINARY_PATH="src-tauri/target/release/featherworks_author"
 APP_DIR="src-tauri/target/release/bundle/macos/$APP_NAME.app"
 CONTENTS="$APP_DIR/Contents"
 MACOS="$CONTENTS/MacOS"
@@ -27,6 +28,7 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
   <key>CFBundleVersion</key><string>0.1.0</string>
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundleExecutable</key><string>featherworks-author</string>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>NSHighResolutionCapable</key><true/>
@@ -41,8 +43,9 @@ chmod +x "$MACOS/featherworks-author"
 # Icon (falls Vorhanden: benutze 512x512.png als Basis icns)
 ICON_SRC="src-tauri/icons/512x512.png"
 if [ -f "$ICON_SRC" ]; then
-  # Temporäre Iconset Struktur
-  TMP_ICONSET=$(mktemp -d)
+  # iconutil only accepts a directory ending in `.iconset`.
+  TMP_ICONSET="$(mktemp -d)/AppIcon.iconset"
+  mkdir -p "$TMP_ICONSET"
   sips -z 16 16     "$ICON_SRC" --out "$TMP_ICONSET/icon_16x16.png" >/dev/null
   sips -z 32 32     "$ICON_SRC" --out "$TMP_ICONSET/icon_16x16@2x.png" >/dev/null
   sips -z 32 32     "$ICON_SRC" --out "$TMP_ICONSET/icon_32x32.png" >/dev/null

@@ -17,7 +17,8 @@ const LICENSES: License[] = [
   { name: 'Rust', license: 'MIT/Apache-2.0', url: 'https://rust-lang.org', description: 'Backend language' },
   
   // AI/LLM
-  { name: 'Phi-3-mini-128K-Instruct', license: 'MIT', url: 'https://huggingface.co/microsoft/Phi-3-mini-128k-instruct', description: 'Microsoft AI model (Fontaine)' },
+  { name: 'Gemma 4 E2B', license: 'Apache 2.0', url: 'https://ai.google.dev/gemma', description: 'Google AI model (Fontaine)' },
+  { name: 'MLX', license: 'MIT', url: 'https://github.com/ml-explore/mlx', description: 'Apple Silicon ML framework' },
   { name: 'llama.cpp', license: 'MIT', url: 'https://github.com/ggerganov/llama.cpp', description: 'LLM inference engine' },
   { name: 'llm (Rust)', license: 'Apache-2.0', url: 'https://github.com/rustformers/llm', description: 'LLM bindings' },
   

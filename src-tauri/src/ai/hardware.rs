@@ -21,7 +21,7 @@ pub struct HardwareInfo {
     pub cpu_brand: String,
     /// Recommended model based on hardware
     pub recommended_model: String,
-    /// Can run the high-performance model (Ministral-8B)
+    /// Can run larger models (>= 8GB RAM)
     pub can_run_large_model: bool,
 }
 
@@ -47,14 +47,16 @@ impl HardwareInfo {
         // CUDA detection (NVIDIA)
         let has_cuda = Self::detect_cuda();
         
-        // Determine which models can run
-        let can_run_large_model = total_ram_mb >= 8192; // 8GB minimum for Ministral-8B
+    // Determine which models can run
+    let can_run_large_model = total_ram_mb >= 8192; // 8GB tier
         
         // Recommend model based on available resources
-        let recommended_model = if can_run_large_model && (has_metal || has_cuda) {
-            "ministral-8b".to_string()
+        let recommended_model = if has_metal {
+            "gemma-4-e2b-mlx-q6".to_string()
+        } else if can_run_large_model && has_cuda {
+            "mistral-7b".to_string()
         } else {
-            "phi-3-mini".to_string()
+            "mistral-7b".to_string()
         };
         
         Self {
@@ -152,8 +154,8 @@ pub fn optimal_params(hardware: &HardwareInfo, model_kind: &ModelKind) -> Infere
     
     // Context size based on model
     let n_ctx = match model_kind {
-        ModelKind::Phi3Mini => 4096,
-        ModelKind::Ministral8B => 8192,
+        ModelKind::Gemma4E2B => 16384,
+        ModelKind::Mistral7B => 8192,
     };
     
     InferenceParams {

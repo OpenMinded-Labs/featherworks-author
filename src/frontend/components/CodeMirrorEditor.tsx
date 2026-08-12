@@ -111,6 +111,10 @@ const spellcheckField = StateField.define<DecorationSet>({
         return Decoration.set(decos, true);
       }
     }
+    // Map decorations through document changes
+    if (tr.docChanged) {
+      return old.map(tr.changes);
+    }
     return old;
   },
   provide: f => EditorView.decorations.from(f)
@@ -140,6 +144,10 @@ const languageToolField = StateField.define<DecorationSet>({
         });
         return Decoration.set(decos, true);
       }
+    }
+    // Map decorations through document changes
+    if (tr.docChanged) {
+      return old.map(tr.changes);
     }
     return old;
   },
@@ -175,6 +183,10 @@ const repetitionField = StateField.define<DecorationSet>({
         return Decoration.set(decos, true);
       }
     }
+    // Map decorations through document changes
+    if (tr.docChanged) {
+      return old.map(tr.changes);
+    }
     return old;
   },
   provide: f => EditorView.decorations.from(f)
@@ -196,6 +208,7 @@ const lektoratHighlightField = StateField.define<DecorationSet>({
         ]);
       }
     }
+    // Clear on doc change (will be recomputed externally)
     if (tr.docChanged) return Decoration.none;
     return old;
   },
@@ -233,6 +246,10 @@ const entityHighlightField = StateField.define<DecorationSet>({
         );
         return Decoration.set(decos, true);
       }
+    }
+    // Map decorations through document changes
+    if (tr.docChanged) {
+      return old.map(tr.changes);
     }
     return old;
   },
@@ -276,18 +293,9 @@ export const CodeMirrorEditor:React.FC<Props> = ({ value, onChange, command$, fi
   useEffect(() => {
     if (typewriterMode && viewRef.current) {
       const v = viewRef.current;
-      requestAnimationFrame(() => {
-        if (!typewriterModeRef.current || !v) return;
-        const head = v.state.selection.main.head;
-        const coords = v.coordsAtPos(head);
-        if (coords) {
-          const scrollDOM = v.scrollDOM;
-          const editorRect = scrollDOM.getBoundingClientRect();
-          const targetY = editorRect.height / 2;
-          const cursorY = coords.top - editorRect.top;
-          const offset = cursorY - targetY;
-          scrollDOM.scrollTop += offset;
-        }
+      const head = v.state.selection.main.head;
+      v.dispatch({
+        effects: EditorView.scrollIntoView(head, { y: 'center' })
       });
     }
   }, [typewriterMode]);
@@ -563,23 +571,28 @@ export const CodeMirrorEditor:React.FC<Props> = ({ value, onChange, command$, fi
             // Trigger all proofreading checks on content change
             triggerAllProofreading(v.view);
           }
-          // Typewriter mode: scroll to keep cursor centered on ANY cursor movement
-          if ((v.docChanged || v.selectionSet) && typewriterModeRef.current) {
-            requestAnimationFrame(() => {
-              const head = v.view.state.selection.main.head;
-              const coords = v.view.coordsAtPos(head);
-              if (coords) {
-                const scrollDOM = v.view.scrollDOM;
-                const editorRect = scrollDOM.getBoundingClientRect();
-                const targetY = editorRect.height / 2;
-                const cursorY = coords.top - editorRect.top;
-                const offset = cursorY - targetY;
-                // Always scroll to center, not just when needed
-                if (Math.abs(offset) > 5) {
-                  scrollDOM.scrollTop += offset;
-                }
+          // Typewriter mode: use native scrollIntoView with deadzone
+          // Only scroll when cursor moves outside the middle third of the viewport
+          if (v.selectionSet && typewriterModeRef.current) {
+            const head = v.view.state.selection.main.head;
+            const coords = v.view.coordsAtPos(head);
+            if (coords) {
+              const scrollDOM = v.view.scrollDOM;
+              const editorRect = scrollDOM.getBoundingClientRect();
+              const cursorY = coords.top - editorRect.top;
+              const viewportHeight = editorRect.height;
+              
+              // Deadzone: middle third of viewport (33%-66%)
+              const deadzoneTop = viewportHeight * 0.33;
+              const deadzoneBottom = viewportHeight * 0.66;
+              
+              // Only center if cursor is outside the deadzone
+              if (cursorY < deadzoneTop || cursorY > deadzoneBottom) {
+                v.view.dispatch({
+                  effects: EditorView.scrollIntoView(head, { y: 'center' })
+                });
               }
-            });
+            }
           }
           // Synonym-Check bei Cursor-Bewegung (debounced)
           if(v.selectionSet && onSynonymRequest) {
@@ -888,5 +901,5 @@ export const CodeMirrorEditor:React.FC<Props> = ({ value, onChange, command$, fi
     });
   }, [commentApi$]);
 
-  return <div className="code-editor-container" ref={ref} />;
+  return <div className={`code-editor-container${typewriterMode ? ' typewriter-mode' : ''}`} ref={ref} />;
 };

@@ -141,7 +141,7 @@ export const AiSettingsModal: React.FC = () => {
               setTestResult(null);
             }}
           >
-            <option value="local">{isGerman ? 'Lokal (Phi-3 Mini)' : 'Local (Phi-3 Mini)'}</option>
+            <option value="local">{isGerman ? 'Lokal (Gemma 4 E2B)' : 'Local (Gemma 4 E2B)'}</option>
             <option value="claude">Claude (Anthropic)</option>
             <option value="openai">OpenAI (GPT)</option>
           </select>

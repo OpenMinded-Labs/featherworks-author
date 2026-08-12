@@ -83,10 +83,10 @@ pub fn start_session(app: &AppHandle, prompt: String) -> Result<String, String> 
     let id = Uuid::new_v4().to_string();
     let provider_config = get_active_provider();
     
-    // Safety truncation for local LLM - Phi-3-mini-128k hat großes Kontextfenster
-    // 16000 chars (~4000 tokens) erlauben lange Szenen (~2000 Wörter) + Prompt overhead
+    // Safety truncation for local LLM - Gemma 4 has a very large context window.
+    // 100000 chars (~25000 tokens) comfortably covers whole chapters plus context.
     let prompt = if provider_config.provider_type.is_empty() || provider_config.provider_type == "local" {
-        truncate_prompt_safe(&prompt, 16000)
+        truncate_prompt_safe(&prompt, 100_000)
     } else {
         prompt
     };

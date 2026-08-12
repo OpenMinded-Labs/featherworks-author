@@ -3,8 +3,14 @@
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ModelKind { 
-    Phi3Mini,      // Microsoft Phi-3-mini-4k-instruct (3.8B params)
-    Ministral8B,   // Mistral Ministral-8B-Instruct-2410 (8B params)
+    Gemma4E2B,     // Gemma 4 E2B (MLX)
+    Mistral7B,     // Mistral 7B (GGUF)
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum RuntimeKind {
+    Mlx,
+    LlamaCpp,
 }
 
 #[derive(Clone, Debug)]
@@ -34,36 +40,43 @@ pub struct ModelInfo {
     pub is_bundled: bool,           // Included in app bundle?
     pub download_url: Option<&'static str>, // URL for optional download
     pub quantization: &'static str, // e.g. "Q4_K_M"
+    pub runtime: RuntimeKind,       // Runtime backend (MLX / llama.cpp)
 }
 
 /// Model Registry - all supported models
 pub static REGISTRY: &[ModelInfo] = &[
-    // Default model - downloaded on first use
+    // Default model - Apple-first local runtime (MLX)
     ModelInfo { 
-        id: "phi-3-mini", 
-        name: "Phi-3 Mini 128K",
-        file: "phi-3-mini-128K-Instruct_q4_k_m.gguf", 
-        kind: ModelKind::Phi3Mini, 
-        // 128K context - use 16384 for efficiency, can go higher if needed
-        params: ModelParams { ctx: 16384, temperature: 0.7, top_p: 0.9, repeat_penalty: 1.1, gpu_layers: 99 },
-        size_bytes: 2_394_518_624,  // ~2.3 GB
-        ram_required_mb: 4096,       // 4 GB RAM minimum
-        is_bundled: false,
-        download_url: Some("https://huggingface.co/microsoft/Phi-3-mini-128k-instruct-gguf/resolve/main/Phi-3-mini-128k-instruct-q4.gguf"),
-        quantization: "Q4_K_M",
+        id: "gemma-4-e2b-mlx-q6", 
+        name: "Gemma 4 E2B (MLX Q6)",
+        // For MLX we expect a model directory containing MLX-converted artifacts.
+        // The `-text` variant has the vision/audio towers stripped (see
+        // scripts/strip_gemma_multimodal.py): Fontaine is text-only, so the
+        // encoders were ~0.95 GB of dead weight.
+        file: "models/gemma-4-e2b-mlx-q6-text", 
+        kind: ModelKind::Gemma4E2B,
+        // Gemma 4 handles long context well; give it generous room.
+        params: ModelParams { ctx: 65536, temperature: 0.7, top_p: 0.9, repeat_penalty: 1.1, gpu_layers: 99 },
+        size_bytes: 3_760_000_000,
+        ram_required_mb: 6144,
+        is_bundled: true,
+        download_url: None,
+        quantization: "MLX Q6",
+        runtime: RuntimeKind::Mlx,
     },
-    // Optional high-performance model - downloaded on demand
+    // Windows/Linux fallback runtime (GGUF + llama.cpp)
     ModelInfo { 
         id: "mistral-7b", 
         name: "Mistral 7B Instruct",
         file: "mistral-7b-instruct-v0.3-q4_k_m.gguf", 
-        kind: ModelKind::Ministral8B, 
+        kind: ModelKind::Mistral7B,
         params: ModelParams { ctx: 8192, temperature: 0.7, top_p: 0.9, repeat_penalty: 1.1, gpu_layers: 99 },
         size_bytes: 4_368_438_976,  // ~4.1 GB
         ram_required_mb: 6144,       // 6 GB RAM minimum
         is_bundled: false,
         download_url: Some("https://huggingface.co/TheBloke/Mistral-7B-Instruct-v0.2-GGUF/resolve/main/mistral-7b-instruct-v0.2.Q4_K_M.gguf"),
         quantization: "Q4_K_M",
+        runtime: RuntimeKind::LlamaCpp,
     },
 ];
 
@@ -74,7 +87,7 @@ pub fn find(id: &str) -> Option<ModelInfo> {
 
 /// Get default model (bundled)
 pub fn default_model() -> &'static ModelInfo {
-    &REGISTRY[0]  // phi-3-mini
+    &REGISTRY[0]  // gemma-4-e2b-mlx-q6
 }
 
 /// List all available model IDs

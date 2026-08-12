@@ -1,7 +1,7 @@
 //! LLM Provider Abstraction Layer
 //! 
 //! Unified interface for different LLM backends:
-//! - Local (llama.cpp with Phi-3, etc.)
+//! - Local (MLX on Apple Silicon, llama.cpp on Windows/Linux)
 //! - Claude (Anthropic API)
 //! - OpenAI (GPT-4, etc.)
 
@@ -24,7 +24,7 @@ pub enum ProviderType {
 impl ProviderType {
     pub fn display_name(&self) -> &'static str {
         match self {
-            ProviderType::Local => "Lokal (Phi-3)",
+            ProviderType::Local => "Lokal (Gemma)",
             ProviderType::Claude => "Claude (Anthropic)",
             ProviderType::OpenAI => "OpenAI (GPT)",
         }
