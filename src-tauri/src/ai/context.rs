@@ -740,6 +740,83 @@ mod tests {
         assert_eq!(ranked[0].1, EntityRelevance::InQuery);
     }
 
+    /// "Welche Augenfarbe hat Jack nochmal?" while Jack is nowhere near the
+    /// current scene. The lookup must not depend on the visible text: entities
+    /// are loaded from the database, so a question alone is enough to pull the
+    /// full description in.
+    #[test]
+    fn a_character_absent_from_the_scene_is_still_looked_up() {
+        let ctx = context_with(
+            vec![
+                entity("Marla", "", "Die Protagonistin."),
+                entity("Jack", "", "Grüne Augen, Narbe über der Braue."),
+            ],
+            // Jack does not appear here at all.
+            Some("Marla stand allein am Fenster und wartete."),
+        );
+
+        let prompt = ctx.to_prompt_context(Some("Welche Augenfarbe hat Jack nochmal?"));
+        assert!(
+            prompt.contains("Grüne Augen"),
+            "asked about Jack but his description never reached the prompt:\n{prompt}"
+        );
+    }
+
+    /// Where the name-matching retrieval genuinely fails. Not a wishlist: each
+    /// case below is a question a user would plausibly type, and the current
+    /// lookup returns nothing for all of them. Kept as a live test so the
+    /// limitation is documented rather than assumed away.
+    #[test]
+    fn retrieval_misses_questions_that_do_not_spell_the_name() {
+        let ctx = context_with(
+            vec![ContextEntity {
+                id: "jack".into(),
+                type_name: "Charakter".into(),
+                name: "Jack".into(),
+                aliases: String::new(),
+                description: "Grüne Augen. Kapitän der Nordwind.".into(),
+            }],
+            Some("Marla stand allein am Fenster."),
+        );
+
+        let missed = [
+            // Pronoun: the name only appeared in an earlier chat turn.
+            "Welche Augenfarbe hat er nochmal?",
+            // Role instead of name.
+            "Wie sieht der Kapitän aus?",
+            // Typo.
+            "Welche Augenfarbe hat Jak?",
+            // Inflected form - German genitive does not match the bare name.
+            "Was ist Jacks Augenfarbe?",
+        ];
+
+        for question in missed {
+            let prompt = ctx.to_prompt_context(Some(question));
+            assert!(
+                !prompt.contains("Grüne Augen"),
+                "retrieval unexpectedly succeeded for {question:?} - \
+                 if this now works, delete the case instead of loosening it"
+            );
+        }
+    }
+
+    /// The narrowed-scope case: the user marked one paragraph, so the model sees
+    /// a sliver of prose. Entity lookup must be unaffected by that narrowing.
+    #[test]
+    fn entity_lookup_survives_a_narrowed_scene_scope() {
+        let entities = vec![entity("Jack", "", "Grüne Augen, Narbe über der Braue.")];
+        let question = Some("Welche Augenfarbe hat Jack?");
+
+        let full = context_with(entities.clone(), Some("Ein langes Kapitel ohne Jack."));
+        let narrowed = context_with(entities, Some("Ein Satz."));
+
+        assert!(full.to_prompt_context(question).contains("Grüne Augen"));
+        assert!(
+            narrowed.to_prompt_context(question).contains("Grüne Augen"),
+            "narrowing the scene scope hid an entity the user asked about"
+        );
+    }
+
     #[test]
     fn unmentioned_entities_are_listed_without_description() {
         let ctx = context_with(
