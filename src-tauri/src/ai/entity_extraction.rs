@@ -422,49 +422,52 @@ pub fn build_detail_prompt(text: &str, entities: &[DiscoveredEntity], lang: &str
 
     let is_english = lang == "en";
 
+    // Kein Prefill am Ende ("[{\"name\":\"").
+    //
+    // Der Trick stammt aus der Completion-API, wo der Modelltext direkt an den
+    // Prompt anschliesst. Ueber die Chat-API ist das Prefill Teil der
+    // *Nutzer*-Nachricht: das Modell setzt es nicht fort, sondern ahmt es nach
+    // und antwortet mit "Marla Keane","entity_type":... - ohne oeffnende
+    // Klammer und mit Zeilenumbruechen statt Kommas. Gemessen: das Parsen
+    // schlug damit jedes Mal fehl, die Detail-Phase lieferte also nie etwas,
+    // und der Fallback trug leere Beschreibungen ein.
     if is_english {
         format!(
-            r#"<|system|>
-Create JSON for entities. Only use entity_type: character, location, item, faction.
-<|end|>
-<|user|>
+            r#"Create a JSON array for these entities.
+
 Candidates:
 {entities_str}
 
 TEXT:
 {truncated_text}
 
-For each candidate that is a real name (person, place, object, organization):
-{{"name":"NAME","entity_type":"character/location/item/faction","aliases":[],"description":"short"}}
+For each candidate that is a real name (person, place, object, organization),
+emit one object:
+{{"name":"NAME","entity_type":"character|location|item|faction","aliases":[],"description":"short"}}
 
-IMPORTANT: entity_type MUST be one of: character, location, item, faction!
-If candidate is not a real name (e.g. "darkness", "pain"): omit it.
-JSON Array:
-<|end|>
-<|assistant|>
-[{{"name":""#
+Rules:
+- entity_type MUST be one of: character, location, item, faction
+- If a candidate is not a real name (e.g. "darkness", "pain"): omit it
+- Answer with the JSON array only, no explanation"#
         )
     } else {
         format!(
-            r#"<|system|>
-Erstelle JSON für Entities. Nur entity_type: character, location, item, faction verwenden.
-<|end|>
-<|user|>
+            r#"Erstelle ein JSON-Array für diese Entities.
+
 Kandidaten:
 {entities_str}
 
 TEXT:
 {truncated_text}
 
-Für jeden Kandidaten der ein echter Name ist (Person, Ort, Gegenstand, Organisation):
-{{"name":"NAME","entity_type":"character/location/item/faction","aliases":[],"description":"kurz"}}
+Für jeden Kandidaten, der ein echter Name ist (Person, Ort, Gegenstand,
+Organisation), geben ein Objekt aus:
+{{"name":"NAME","entity_type":"character|location|item|faction","aliases":[],"description":"kurz"}}
 
-WICHTIG: entity_type MUSS einer von: character, location, item, faction sein!
-Wenn Kandidat kein echter Name ist (z.B. "Dunkelheit", "Schmerz"): weglassen.
-JSON Array:
-<|end|>
-<|assistant|>
-[{{"name":""#
+Regeln:
+- entity_type MUSS einer von: character, location, item, faction sein
+- Wenn ein Kandidat kein echter Name ist (z.B. "Dunkelheit", "Schmerz"): weglassen
+- Antworte nur mit dem JSON-Array, ohne Erklärung"#
         )
     }
 }
@@ -1314,61 +1317,28 @@ pub fn validate_entities_against_text(
 ) -> Vec<ExtractedEntity> {
     let text_lower = original_text.to_lowercase();
 
-    // === PROMPT-BEISPIELE: Diese stammen aus unseren Prompts und werden vom LLM kopiert ===
-    // Müssen IMMER gefiltert werden, da sie nicht aus dem User-Text stammen
-    let prompt_examples: std::collections::HashSet<&str> = [
-        // Character-Beispiele aus Prompts (DE)
-        "maria",
-        "dr. schmidt",
-        "elena",
-        "marcus",
-        "thomas müller",
-        // Character-Beispiele aus Prompts (EN)
-        "john",
-        "dr. smith",
-        "sarah",
-        "williams",
-        // Location-Beispiele aus Prompts (DE)
-        "berlin",
-        "hauptstraße 5",
-        "café luna",
-        "schloss neuschwanstein",
-        "dunkelwald",
-        "münchen",
-        "wien",
-        "hamburg",
-        "frankfurt",
-        // Location-Beispiele aus Prompts (EN)
-        "new york",
-        "central park",
-        "the cemetery",
-        "the old church",
-        "the hospital",
-        // Item-Beispiele aus Prompts (DE)
-        "excalibur",
-        "das buch der schatten",
-        "großvaters ring",
-        "schattenkrone",
-        "buch der schatten",
-        // Item-Beispiele aus Prompts (EN)
-        "the book of shadows",
-        "grandfather's ring",
-        "book of shadows",
-        // Faction-Beispiele aus Prompts (DE)
-        "die illuminati",
-        "illuminati",
-        "clan macdonald",
-        "macdonald",
-        "die gilde der magier",
-        "gilde der magier",
-        // Faction-Beispiele aus Prompts (EN)
-        "the illuminati",
-        "the mage guild",
-        "mage guild",
-        // JSON-Beispiele die manchmal kopiert werden
+    // === SCHEMA-ARTEFAKTE: Feldnamen und Typwerte, die das LLM manchmal als
+    // Entity ausgibt, statt sie als Struktur zu verwenden ===
+    //
+    // Hier stand frueher zusaetzlich eine Liste der Beispielnamen aus unseren
+    // Prompts ("maria", "john", "sarah", "berlin", "excalibur", ...), die
+    // bedingungslos geloescht wurden - ohne je in den Text zu schauen. Damit
+    // war eine Figur namens Maria oder eine Stadt namens Berlin nicht
+    // auffindbar, egal wie oft sie im Manuskript stand.
+    //
+    // Die Liste war ausserdem ueberfluessig: gegen abgeschriebene Beispiele
+    // schuetzt bereits Filter 3, der jeden Namen im Originaltext nachschlaegt.
+    // Ein Beispiel, das nicht im Manuskript steht, faellt dort ohnehin raus.
+    // Uebrig bleiben nur die Schema-Woerter, denn "description" kann in einem
+    // deutschen Text durchaus vorkommen und waere dann faelschlich eine Figur.
+    let schema_artifacts: std::collections::HashSet<&str> = [
         "name",
         "entity_type",
+        "aliases",
         "description",
+        "notes",
+        "confidence",
+        "occurrences",
         "character",
         "location",
         "item",
@@ -1609,9 +1579,9 @@ pub fn validate_entities_against_text(
             let name_lower = name_trimmed.to_lowercase();
 
             // === FILTER 0: Prompt-Beispiele (vom LLM kopiert) ===
-            if prompt_examples.contains(name_lower.as_str()) {
+            if schema_artifacts.contains(name_lower.as_str()) {
                 log::info!(
-                    "[entity_filter] Filtered '{}': prompt example (copied from instructions)",
+                    "[entity_filter] Filtered '{}': JSON schema word, not an entity name",
                     e.name
                 );
                 return false;
@@ -2139,5 +2109,69 @@ mod tests {
         let entities = parse_extraction_response(response).unwrap();
         assert_eq!(entities.len(), 1);
         assert_eq!(entities[0].name, "Anna");
+    }
+
+    fn extracted(name: &str, entity_type: &str) -> ExtractedEntity {
+        ExtractedEntity {
+            entity_type: entity_type.to_string(),
+            name: name.to_string(),
+            aliases: Vec::new(),
+            description: String::new(),
+            notes: String::new(),
+            confidence: 0.9,
+            occurrences: Vec::new(),
+        }
+    }
+
+    /// The hallucination filter drops names that appear in our own prompts, so
+    /// the model cannot smuggle its examples in as findings. That list is
+    /// applied without ever looking at the manuscript, so a real character who
+    /// happens to share a name with an example is deleted too - and the names
+    /// chosen as examples are among the most common ones there are.
+    #[test]
+    fn common_first_names_survive_the_prompt_example_filter() {
+        let text = "Maria trat ans Fenster. Hinter ihr wartete Elena, waehrend \
+                    Marcus schwieg. Sarah kam aus Berlin, John blieb draussen.";
+
+        let entities = vec![
+            extracted("Maria", "character"),
+            extracted("Elena", "character"),
+            extracted("Marcus", "character"),
+            extracted("Sarah", "character"),
+            extracted("John", "character"),
+            extracted("Berlin", "location"),
+        ];
+
+        let kept = validate_entities_against_text(entities, text);
+        let names: Vec<&str> = kept.iter().map(|e| e.name.as_str()).collect();
+
+        assert!(
+            names.contains(&"Maria"),
+            "a character standing in the text was deleted because a prompt \
+             elsewhere uses the same name as an example; kept: {names:?}"
+        );
+        assert_eq!(names.len(), 6, "kept: {names:?}");
+    }
+
+    /// The other half of the same rule: a name the model invented, or copied
+    /// from the instructions, must still be dropped.
+    #[test]
+    fn names_absent_from_the_text_are_still_dropped() {
+        let text = "Marla trat ans Fenster.";
+
+        let kept = validate_entities_against_text(
+            vec![
+                extracted("Marla", "character"),
+                // Never written by the user - either hallucinated or copied
+                // out of the prompt examples.
+                extracted("Maria", "character"),
+                extracted("Dr. Schmidt", "character"),
+                extracted("Excalibur", "item"),
+            ],
+            text,
+        );
+        let names: Vec<&str> = kept.iter().map(|e| e.name.as_str()).collect();
+
+        assert_eq!(names, vec!["Marla"], "kept: {names:?}");
     }
 }

@@ -298,3 +298,102 @@ fn a_stale_server_is_cleaned_up_on_start() {
 
     let _ = orphan.kill();
 }
+
+/// What the world scan actually gets back, phase by phase.
+///
+/// The report is that only locations are ever found, always the same three.
+/// This runs the real discovery prompts against the real model and prints both
+/// the raw reply and what the parser makes of it, so the two can be told apart:
+/// a model that finds nobody is a prompt problem, a model that lists people
+/// which then vanish is a parser problem.
+#[test]
+#[ignore = "measurement, not an assertion"]
+fn measure_what_discovery_returns_per_phase() {
+    use featherworks_author::ai::entity_extraction::{
+        build_discovery_prompt, parse_discovery_response, ScanPhase,
+    };
+    use featherworks_author::ai::server;
+
+    // Deliberately unambiguous: four named people, three named places.
+    let text = "Marla Keane stand am Fenster des Cafe Luna und wartete auf Jack. \
+                Draussen zog der Regen ueber Berlin. \
+                \"Du bist spaet\", sagte sie, als Jack Smith endlich hereinkam. \
+                Er zuckte mit den Schultern. \"Der Friedhof war voll.\" \
+                Spaeter rief Dr. Herbert Vogel an und fragte nach Caitlin.";
+
+    server::start(&python(), &model_dir()).expect("server failed to start");
+
+    for phase in [
+        ScanPhase::Characters,
+        ScanPhase::Locations,
+        ScanPhase::Items,
+        ScanPhase::Factions,
+    ] {
+        let prompt = build_discovery_prompt(text, phase, "de");
+        let reply = server::chat(&[("user", &prompt)], 500, 0.2, false)
+            .expect("completion failed");
+        let parsed = parse_discovery_response(&reply.content, "x");
+
+        println!("\n===== {phase:?} =====");
+        println!("--- raw reply ---\n{}", reply.content);
+        println!(
+            "--- parser kept {} ---\n{:?}",
+            parsed.len(),
+            parsed.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+    }
+
+    server::stop();
+}
+
+/// The second pass, which is where the entity *type* is actually decided.
+///
+/// Discovery labels a candidate by the phase that found it, but
+/// `build_detail_prompt` asks the model to classify it again, and that answer
+/// wins. So a person can still end up stored as a location here.
+#[test]
+#[ignore = "measurement, not an assertion"]
+fn measure_what_the_detail_pass_does_to_types() {
+    use featherworks_author::ai::entity_extraction::{
+        build_detail_prompt, parse_extraction_response, DiscoveredEntity,
+    };
+    use featherworks_author::ai::server;
+
+    let text = "Marla Keane stand am Fenster des Cafe Luna und wartete auf Jack. \
+                Draussen zog der Regen ueber Berlin. \
+                \"Du bist spaet\", sagte sie, als Jack Smith endlich hereinkam. \
+                Er zuckte mit den Schultern. \"Der Friedhof war voll.\" \
+                Spaeter rief Dr. Herbert Vogel an und fragte nach Caitlin.";
+
+    // Exactly what discovery hands over: people labelled as characters.
+    let batch: Vec<DiscoveredEntity> = [
+        ("Marla Keane", "character"),
+        ("Jack Smith", "character"),
+        ("Cafe Luna", "location"),
+        ("Berlin", "location"),
+    ]
+    .iter()
+    .map(|(n, t)| DiscoveredEntity {
+        name: n.to_string(),
+        entity_type: t.to_string(),
+    })
+    .collect();
+
+    server::start(&python(), &model_dir()).expect("server failed to start");
+
+    let prompt = build_detail_prompt(text, &batch, "de");
+    let reply = server::chat(&[("user", &prompt)], 800, 0.2, false).expect("completion failed");
+
+    println!("--- raw reply ---\n{}", reply.content);
+    match parse_extraction_response(&reply.content) {
+        Ok(entities) => {
+            println!("--- parsed {} ---", entities.len());
+            for e in &entities {
+                println!("  {:<16} -> {}", e.name, e.entity_type);
+            }
+        }
+        Err(e) => println!("--- PARSE FAILED: {e} ---"),
+    }
+
+    server::stop();
+}
