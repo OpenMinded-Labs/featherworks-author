@@ -1119,6 +1119,30 @@ Give me:
   // otherwise identical questions give different answers for no visible reason.
   const [activeScope, setActiveScope] = useState<{ scope: ContextScope; paragraphIndex?: number }>({ scope: 'scene' });
 
+  // The scope has to be visible *before* sending, otherwise the label always
+  // describes the previous request. CodeMirror emits no cursor event we can
+  // subscribe to from here, so poll while the panel is open - cheap, and only
+  // triggers a render when the scope actually changed.
+  // The prop is an inline arrow in the parent, so keep it in a ref: depending
+  // on it directly would tear down the interval on every parent render.
+  const focusRef = useRef(getEditorFocus);
+  focusRef.current = getEditorFocus;
+
+  useEffect(() => {
+    const tick = () => {
+      const scoped = resolveContextScope(sceneContent, focusRef.current?.() ?? null);
+      setActiveScope(prev =>
+        prev.scope === scoped.scope && prev.paragraphIndex === scoped.paragraphIndex
+          ? prev
+          : { scope: scoped.scope, paragraphIndex: scoped.paragraphIndex },
+      );
+    };
+    tick();
+    const id = window.setInterval(tick, 400);
+    return () => window.clearInterval(id);
+  }, [sceneContent]);
+
+
   // Build context string using RAG from backend
   const buildContext = useCallback(async (query: string): Promise<string> => {
     // Selection beats paragraph beats whole scene.

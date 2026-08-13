@@ -29,20 +29,23 @@ export interface ScopedContext {
 const PARAGRAPH_SEPARATOR = /\n\s*\n/;
 
 /**
+ * Fallback separator. Not every manuscript uses blank lines - prose written
+ * with a single newline per paragraph would otherwise collapse into one block
+ * and never scope to a paragraph at all.
+ */
+const SINGLE_NEWLINE_SEPARATOR = /\n/;
+
+/**
  * A selection shorter than this is treated as a pointer rather than content -
  * a double-clicked word should not become the entire context.
  */
 const MIN_SELECTION_CHARS = 15;
 
-/**
- * Splits into paragraphs while keeping each one's offset range, so a cursor
- * position can be mapped back to the paragraph containing it.
- */
-export function splitParagraphs(text: string): Array<{ text: string; from: number; to: number }> {
+function splitOn(text: string, separator: RegExp): Array<{ text: string; from: number; to: number }> {
   const result: Array<{ text: string; from: number; to: number }> = [];
   let offset = 0;
 
-  for (const chunk of text.split(PARAGRAPH_SEPARATOR)) {
+  for (const chunk of text.split(separator)) {
     const start = text.indexOf(chunk, offset);
     if (start === -1) continue;
     if (chunk.trim().length > 0) {
@@ -52,6 +55,20 @@ export function splitParagraphs(text: string): Array<{ text: string; from: numbe
   }
 
   return result;
+}
+
+/**
+ * Splits into paragraphs while keeping each one's offset range, so a cursor
+ * position can be mapped back to the paragraph containing it.
+ */
+export function splitParagraphs(text: string): Array<{ text: string; from: number; to: number }> {
+  const byBlankLine = splitOn(text, PARAGRAPH_SEPARATOR);
+  if (byBlankLine.length > 1) return byBlankLine;
+
+  // Only one block: either the scene really is one paragraph, or it uses
+  // single newlines. Retry - if that yields more, it was the latter.
+  const byNewline = splitOn(text, SINGLE_NEWLINE_SEPARATOR);
+  return byNewline.length > byBlankLine.length ? byNewline : byBlankLine;
 }
 
 /** Paragraph containing `offset`, or null if the scene has none. */
