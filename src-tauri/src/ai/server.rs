@@ -112,9 +112,13 @@ fn model_id_for(model_path: &Path) -> String {
 /// `--model` argument. No user filter is needed - killing a process owned by
 /// somebody else fails with EPERM, which is exactly the desired outcome.
 fn kill_stale_servers() {
+    // Extended regex, because the process is started two different ways:
+    // directly as `-m mlx_lm server` by older builds, and via the watchdog
+    // bootstrap, whose command line carries `mlx_lm.server`. Missing either
+    // spelling would leave the stale process alive.
     let Ok(output) = Command::new("pgrep")
         .arg("-f")
-        .arg("mlx_lm server --model")
+        .arg("mlx_lm[. ]server")
         .output()
     else {
         return;
@@ -150,9 +154,15 @@ pub fn start(python: &str, model_path: &Path) -> Result<()> {
         .ok_or_else(|| anyhow!("no free port in {}..{}", PORT_RANGE.start, PORT_RANGE.end))?;
 
     let mut child = Command::new(python)
-        .arg("-m")
-        .arg("mlx_lm")
-        .arg("server")
+        .arg("-c")
+        .arg(WATCHDOG_BOOTSTRAP)
+        // Read back by the bootstrap and removed from argv before the server
+        // sees it.
+        .arg(std::process::id().to_string())
+        // No `server` argument here: that is the subcommand of the `mlx_lm`
+        // package, while the bootstrap runs the `mlx_lm.server` module
+        // directly, which parses only its own flags. Passing it makes the
+        // server exit with "unrecognized arguments: server".
         .arg("--model")
         .arg(model_path)
         .arg("--port")
@@ -246,6 +256,36 @@ fn wait_until_ready(port: u16) -> Result<()> {
         STARTUP_TIMEOUT.as_secs()
     ))
 }
+
+/// Python bootstrap that runs `mlx_lm.server` under a parent watchdog.
+///
+/// `stop()` and `Drop` only run when the app shuts down in an orderly way.
+/// After a crash or a Force Quit no Rust code runs at all, so the server
+/// survives holding several GB of wired memory until the next app start
+/// cleans it up. That cannot be fixed from the parent - `SIGKILL` is not
+/// interceptable - so the child has to take responsibility for itself.
+///
+/// When the parent dies the child is reparented, on macOS to launchd, and
+/// `getppid()` changes. Polling that is enough to notice, and `os._exit`
+/// skips the interpreter teardown that a half-loaded model can hang in.
+///
+/// `argv` is rebuilt because `runpy` hands it to the server unchanged.
+const WATCHDOG_BOOTSTRAP: &str = r#"
+import os, sys, threading, time, runpy
+
+original_parent = int(sys.argv.pop(1))
+
+def watch():
+    while True:
+        if os.getppid() != original_parent:
+            os._exit(0)
+        time.sleep(1.0)
+
+threading.Thread(target=watch, daemon=True).start()
+
+sys.argv[0] = "mlx_lm server"
+runpy.run_module("mlx_lm.server", run_name="__main__")
+"#;
 
 /// Stops the server if one is running. Safe to call when none is.
 pub fn stop() {

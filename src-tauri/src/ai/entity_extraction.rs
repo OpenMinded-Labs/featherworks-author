@@ -249,16 +249,24 @@ pub fn build_discovery_prompt(text: &str, phase: ScanPhase, lang: &str) -> Strin
             }
         }
         ScanPhase::Locations => {
+            // Anders als die uebrigen Phasen darf hier hergeleitet werden:
+            // Schauplaetze werden oft nur umschrieben. Der Halluzinations-
+            // filter laesst Orte deshalb passieren (siehe Filter 3).
+            //
+            // Die Beispiele nennen bewusst keinen Friedhof, obwohl das der
+            // naheliegende Fall ist. Sonst liesse sich an einem Manuskript,
+            // das einen umschreibt, nicht mehr unterscheiden, ob das Modell
+            // hergeleitet oder nur das Beispiel abgeschrieben hat.
             if is_english {
                 (
-                "List all LOCATIONS where scenes take place (cities, buildings, important story locations)", 
-                "New York, Central Park, the cemetery, the old church, the hospital",
+                "List all LOCATIONS where scenes take place (cities, buildings, important story locations). Also name a location that is only described rather than named: if someone walks between headstones, the location is a graveyard", 
+                "New York, Central Park, the old church, the hospital, the harbour",
                 "room, darkness, floor, outside, here, inside"
             )
             } else {
                 (
-                "Liste alle ORTE wo Szenen spielen aus dem Text (Städte, Gebäude, wichtige Handlungsorte)", 
-                "Berlin, Café Luna, der Friedhof, die alte Kirche, das Krankenhaus, der Park",
+                "Liste alle ORTE wo Szenen spielen aus dem Text (Städte, Gebäude, wichtige Handlungsorte). Benenne auch Orte, die nur beschrieben statt genannt werden: wer zwischen Grabsteinen läuft, ist auf einem Gräberfeld", 
+                "Berlin, Café Luna, die alte Kirche, das Krankenhaus, der Hafen",
                 "Zimmer, Raum, Dunkelheit, Boden, draußen, hier, oben, innen"
             )
             }
@@ -1612,14 +1620,43 @@ pub fn validate_entities_against_text(
             }
 
             // === FILTER 3: Text-Validierung (Halluzinations-Prüfung) ===
+            //
+            // Orte sind ausgenommen. Ein Schauplatz wird oft umschrieben statt
+            // benannt: wer zwischen Grabsteinen laeuft und aus einer Gruft
+            // kommt, ist auf einem Friedhof, auch wenn das Wort nirgends
+            // steht. Fuer diesen Filter ist "hergeleitet" von "erfunden" nicht
+            // unterscheidbar, also wuerde er jeden nur umschriebenen Schauplatz
+            // als Halluzination loeschen.
+            //
+            // Der Preis ist bekannt: erfundene Orte kommen jetzt durch. Sie
+            // sind im Glossar sichtbar und dort korrigierbar; ein
+            // stillschweigend geloeschter Hauptschauplatz war es nicht.
+            // Personen, Gegenstaende und Gruppen bleiben streng geprueft, denn
+            // dort ist die Umschreibung nicht der Normalfall.
+            if e.entity_type.trim().eq_ignore_ascii_case("location") {
+                return true;
+            }
+
             let name_parts: Vec<&str> = name_trimmed.split_whitespace().collect();
+
+            // Anführungszeichen und Satzzeichen am Rand eines Namensteils
+            // abschneiden.
+            //
+            // Sonst scheitert die Wortgrenzenprüfung unten an Namen wie
+            // Caitlin „Caite“ Keane: das Muster \b“caite”\b kann nie greifen,
+            // denn zwischen Leerzeichen und Anführungszeichen liegt keine
+            // Wortgrenze - beides sind Nicht-Wortzeichen. Eine Figur, die
+            // woertlich im Manuskript steht, galt damit als Halluzination.
+            let strip_marks =
+                |p: &str| p.trim_matches(|c: char| !c.is_alphanumeric()).to_lowercase();
 
             let found = if name_parts.len() > 1 {
                 // Mehrteiliger Name: ALLE signifikanten Teile müssen vorkommen
-                let significant_parts: Vec<_> = name_parts
+                let significant_parts: Vec<String> = name_parts
                     .iter()
+                    .map(|p| strip_marks(p))
                     .filter(|p| {
-                        p.len() >= 4 && !articles.iter().any(|a| a.trim() == p.to_lowercase())
+                        p.chars().count() >= 4 && !articles.iter().any(|a| a.trim() == p)
                     })
                     .collect();
 
@@ -1627,21 +1664,22 @@ pub fn validate_entities_against_text(
                     text_lower.contains(&name_lower)
                 } else {
                     significant_parts.iter().all(|part| {
-                        let part_lower = part.to_lowercase();
-                        let pattern = format!(r"\b{}\b", regex::escape(&part_lower));
+                        let pattern = format!(r"\b{}\b", regex::escape(part));
                         if let Ok(re) = regex::Regex::new(&pattern) {
                             re.is_match(&text_lower)
                         } else {
-                            text_lower.contains(&part_lower)
+                            text_lower.contains(part.as_str())
                         }
                     })
                 }
             } else {
-                let pattern = format!(r"\b{}\b", regex::escape(&name_lower));
+                let bare = strip_marks(name_trimmed);
+                let needle = if bare.is_empty() { &name_lower } else { &bare };
+                let pattern = format!(r"\b{}\b", regex::escape(needle));
                 if let Ok(re) = regex::Regex::new(&pattern) {
                     re.is_match(&text_lower)
                 } else {
-                    text_lower.contains(&name_lower)
+                    text_lower.contains(needle.as_str())
                 }
             };
 
@@ -2173,5 +2211,103 @@ mod tests {
         let names: Vec<&str> = kept.iter().map(|e| e.name.as_str()).collect();
 
         assert_eq!(names, vec!["Marla"], "kept: {names:?}");
+    }
+
+    /// A name carrying a quoted nickname, which is how the merge step names a
+    /// character once it has absorbed the "Caitlin \"Caite\" Keane" spelling.
+    ///
+    /// Filter 3 checks every part of a name with a `\b...\b` regex. A part like
+    /// `"Caite"` begins and ends with a quote, and a word boundary cannot exist
+    /// between a space and a quote - both are non-word characters. The pattern
+    /// therefore never matches, and a character standing verbatim in the
+    /// manuscript is discarded as a hallucination.
+    #[test]
+    fn a_quoted_nickname_does_not_look_like_a_hallucination() {
+        // Every quotation style a German manuscript realistically uses.
+        for quoted in [
+            "Caitlin \u{201c}Caite\u{201d} Keane", // “ ”
+            "Caitlin \u{201e}Caite\u{201c} Keane", // „ “
+            "Caitlin 'Caite' Keane",
+            "Caitlin \"Caite\" Keane",
+            "Caitlin \u{00bb}Caite\u{00ab} Keane", // » «
+        ] {
+            let text = format!("Am Fenster stand {quoted} und schwieg.");
+            let kept = validate_entities_against_text(
+                vec![extracted(quoted, "character")],
+                &text,
+            );
+            assert_eq!(
+                kept.len(),
+                1,
+                "{quoted:?} was dropped although it stands verbatim in the text"
+            );
+        }
+    }
+
+    /// The quote handling must not turn into "punctuation matches anything".
+    #[test]
+    fn a_quoted_nickname_that_is_absent_is_still_dropped() {
+        let text = "Am Fenster stand Caitlin Keane und schwieg.";
+        let kept = validate_entities_against_text(
+            vec![extracted("Marla \u{201c}Mars\u{201d} Vogel", "character")],
+            text,
+        );
+        assert!(
+            kept.is_empty(),
+            "a name absent from the text survived: {:?}",
+            kept.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+    }
+
+    /// A scene can establish its setting without ever naming it. Walking
+    /// between headstones, out of a crypt, puts the scene in a graveyard - and
+    /// that is the location the glossary should carry.
+    ///
+    /// Filter 3 cannot tell such a name from an invented one, so locations are
+    /// exempt from it.
+    #[test]
+    fn a_location_that_is_only_described_survives() {
+        let text = "Sie lief zwischen den Grabsteinen hindurch, \
+                    heraus aus der Gruft, vorbei an steinernen Sarkophagen.";
+
+        let kept = validate_entities_against_text(
+            vec![
+                extracted("Friedhof", "location"),
+                extracted("die Gruft", "location"),
+            ],
+            text,
+        );
+        let names: Vec<&str> = kept.iter().map(|e| e.name.as_str()).collect();
+
+        assert!(
+            names.contains(&"Friedhof"),
+            "the setting of the scene was dropped because the word itself is \
+             never written; kept: {names:?}"
+        );
+    }
+
+    /// The exemption is deliberately narrow. Loosening it for locations must
+    /// not loosen it for everyone - a person, item or group that is absent
+    /// from the text is still a hallucination.
+    #[test]
+    fn the_location_exemption_does_not_extend_to_other_types() {
+        let text = "Sie lief zwischen den Grabsteinen hindurch.";
+
+        let kept = validate_entities_against_text(
+            vec![
+                extracted("Totengr\u{e4}ber Hoffmann", "character"),
+                extracted("Die Gilde der Totengr\u{e4}ber", "faction"),
+                extracted("Schaufel des Ahnen", "item"),
+                extracted("Friedhof", "location"),
+            ],
+            text,
+        );
+        let names: Vec<&str> = kept.iter().map(|e| e.name.as_str()).collect();
+
+        assert_eq!(
+            names,
+            vec!["Friedhof"],
+            "only locations may be inferred; kept: {names:?}"
+        );
     }
 }

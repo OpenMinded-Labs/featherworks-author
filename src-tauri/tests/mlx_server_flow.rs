@@ -346,7 +346,81 @@ fn measure_what_discovery_returns_per_phase() {
     server::stop();
 }
 
-/// The second pass, which is where the entity *type* is actually decided.
+/// The discovery phases as the *app* runs them.
+///
+/// The earlier measurement passed the raw prompt straight to `server::chat`,
+/// which is not what happens in production: the engine first splits the Phi-3
+/// markers into system and user roles. That difference matters, because the
+/// system message is where the "answer only with names" instruction sits.
+#[test]
+#[ignore = "measurement, not an assertion"]
+fn measure_discovery_through_the_real_engine_path() {
+    use featherworks_author::ai::entity_extraction::{
+        build_discovery_prompt, parse_discovery_response, ScanPhase,
+    };
+    use featherworks_author::ai::server;
+
+    // Mirrors engines::mlx::split_prompt_roles, which is crate-private.
+    fn split_roles(prompt: &str) -> (String, String) {
+        let mut system = String::new();
+        let mut user = String::new();
+        let mut rest = prompt;
+        if let Some(i) = rest.find("<|system|>") {
+            let after = &rest[i + "<|system|>".len()..];
+            let end = after.find("<|end|>").unwrap_or(after.len());
+            system = after[..end].trim().to_string();
+            rest = &after[end.min(after.len())..];
+        }
+        if let Some(i) = rest.find("<|user|>") {
+            let after = &rest[i + "<|user|>".len()..];
+            let end = after.find("<|end|>").unwrap_or(after.len());
+            user = after[..end].trim().to_string();
+        }
+        if system.is_empty() && user.is_empty() {
+            user = prompt.trim().to_string();
+        }
+        (system, user)
+    }
+
+    let text = "Marla Keane stand am Fenster des Cafe Luna und wartete auf Jack. \
+                Draussen zog der Regen ueber Berlin. \
+                \"Du bist spaet\", sagte sie, als Jack Smith endlich hereinkam. \
+                Er zuckte mit den Schultern. \"Der Friedhof war voll.\" \
+                Spaeter rief Dr. Herbert Vogel an und fragte nach Caitlin.";
+
+    server::start(&python(), &model_dir()).expect("server failed to start");
+
+    for phase in [
+        ScanPhase::Characters,
+        ScanPhase::Locations,
+        ScanPhase::Items,
+        ScanPhase::Factions,
+    ] {
+        let prompt = build_discovery_prompt(text, phase, "de");
+        let (system, user) = split_roles(&prompt);
+
+        let mut messages: Vec<(&str, &str)> = Vec::new();
+        if !system.trim().is_empty() {
+            messages.push(("system", system.as_str()));
+        }
+        messages.push(("user", user.as_str()));
+
+        // 500 is what the world scan requests; the engine adds thinking headroom.
+        let reply = server::chat(&messages, 500 + 2048, 0.2, false).expect("completion failed");
+        let parsed = parse_discovery_response(&reply.content, "x");
+
+        println!("\n===== {phase:?} =====");
+        println!("--- raw reply ---\n{}", reply.content);
+        println!(
+            "--- parser kept {} ---\n{:?}",
+            parsed.len(),
+            parsed.iter().map(|e| &e.name).collect::<Vec<_>>()
+        );
+    }
+
+    server::stop();
+}
+
 ///
 /// Discovery labels a candidate by the phase that found it, but
 /// `build_detail_prompt` asks the model to classify it again, and that answer
