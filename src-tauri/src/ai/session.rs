@@ -1,6 +1,6 @@
-use std::sync::{Arc, Mutex};
-use anyhow::Result;
 use crate::ai::{loader::ModelLoader, registry::ModelInfo};
+use anyhow::Result;
+use std::sync::{Arc, Mutex};
 
 pub struct InferenceSession {
     loader: Arc<Mutex<Box<dyn ModelLoader>>>,
@@ -8,8 +8,13 @@ pub struct InferenceSession {
 }
 
 impl InferenceSession {
-    pub fn new(loader: Arc<Mutex<Box<dyn ModelLoader>>>, model: ModelInfo) -> Self { Self { loader, _model: model } }
-    pub fn generate(&self, prompt:&str, max_tokens:usize) -> Result<Vec<String>> {
+    pub fn new(loader: Arc<Mutex<Box<dyn ModelLoader>>>, model: ModelInfo) -> Self {
+        Self {
+            loader,
+            _model: model,
+        }
+    }
+    pub fn generate(&self, prompt: &str, max_tokens: usize) -> Result<Vec<String>> {
         let guard = self.loader.lock().unwrap();
         let iter = guard.generate_tokens(prompt, max_tokens)?;
         Ok(iter.collect())

@@ -1,9 +1,9 @@
 //! LanguageTool API Integration
-//! 
+//!
 //! Unterstützt die kostenlose API und Premium-Accounts.
 //! Bietet Grammatik-, Rechtschreib- und Stilprüfung.
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -34,15 +34,15 @@ impl IssueType {
     /// CSS-Farbe für die Unterstreichung
     pub fn color(&self) -> &'static str {
         match self {
-            IssueType::Misspelling => "#e53e3e",      // Rot
-            IssueType::Grammar => "#3182ce",          // Blau
-            IssueType::Punctuation => "#3182ce",      // Blau
-            IssueType::Style => "#d69e2e",            // Gelb/Orange
-            IssueType::Typographical => "#805ad5",    // Lila
-            IssueType::Other => "#718096",            // Grau
+            IssueType::Misspelling => "#e53e3e",   // Rot
+            IssueType::Grammar => "#3182ce",       // Blau
+            IssueType::Punctuation => "#3182ce",   // Blau
+            IssueType::Style => "#d69e2e",         // Gelb/Orange
+            IssueType::Typographical => "#805ad5", // Lila
+            IssueType::Other => "#718096",         // Grau
         }
     }
-    
+
     /// Label für die UI
     pub fn label(&self) -> &'static str {
         match self {
@@ -170,37 +170,41 @@ pub async fn check_text(text: &str, config: &LtConfig) -> Result<Vec<LtIssue>> {
     if !config.enabled {
         return Ok(Vec::new());
     }
-    
+
     // Leeren Text nicht prüfen
     if text.trim().is_empty() {
         return Ok(Vec::new());
     }
-    
+
     // Text-Limit: 40.000 Zeichen für kostenlose API, mehr für Premium
-    let max_len = if config.api_key.is_some() { 100_000 } else { 40_000 };
+    let max_len = if config.api_key.is_some() {
+        100_000
+    } else {
+        40_000
+    };
     let check_text = if text.len() > max_len {
         &text[..max_len]
     } else {
         text
     };
-    
+
     // API Endpoint wählen
     let endpoint = if config.api_key.is_some() {
         LT_API_PREMIUM
     } else {
         LT_API_FREE
     };
-    
+
     // Request bauen
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()?;
-    
+
     let mut params = vec![
         ("text", check_text.to_string()),
         ("language", config.language.clone()),
     ];
-    
+
     // Premium-Auth hinzufügen
     if let (Some(key), Some(user)) = (&config.api_key, &config.username) {
         params.push(("apiKey", key.clone()));
@@ -209,70 +213,79 @@ pub async fn check_text(text: &str, config: &LtConfig) -> Result<Vec<LtIssue>> {
         // Nur API-Key ohne Username (manche setups)
         params.push(("apiKey", key.clone()));
     }
-    
+
     // Deaktivierte Regeln
     if !config.disabled_rules.is_empty() {
         params.push(("disabledRules", config.disabled_rules.join(",")));
     }
-    
+
     // Aktivierte Kategorien
     if !config.enabled_categories.is_empty() {
         params.push(("enabledCategories", config.enabled_categories.join(",")));
         params.push(("enabledOnly", "true".to_string()));
     }
-    
-    log::info!("[LanguageTool] Checking {} chars with {}", check_text.len(), endpoint);
-    
-    let response = client
-        .post(endpoint)
-        .form(&params)
-        .send()
-        .await?;
-    
+
+    log::info!(
+        "[LanguageTool] Checking {} chars with {}",
+        check_text.len(),
+        endpoint
+    );
+
+    let response = client.post(endpoint).form(&params).send().await?;
+
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().await.unwrap_or_default();
         return Err(anyhow!("LanguageTool API error {}: {}", status, body));
     }
-    
+
     let api_response: LtApiResponse = response.json().await?;
-    
+
     // Matches in unsere Struktur konvertieren
-    let issues: Vec<LtIssue> = api_response.matches.into_iter().map(|m| {
-        let issue_type = match m.rule.issue_type.as_deref() {
-            Some("misspelling") => IssueType::Misspelling,
-            Some("grammar") => IssueType::Grammar,
-            Some("typographical") => IssueType::Typographical,
-            Some("style") => IssueType::Style,
-            Some("punctuation") => IssueType::Punctuation,
-            _ => {
-                // Fallback basierend auf Kategorie
-                match m.rule.category.id.as_str() {
-                    "TYPOS" | "SPELLING" => IssueType::Misspelling,
-                    "GRAMMAR" | "MISC" => IssueType::Grammar,
-                    "PUNCTUATION" => IssueType::Punctuation,
-                    "STYLE" | "REDUNDANCY" => IssueType::Style,
-                    "TYPOGRAPHY" => IssueType::Typographical,
-                    _ => IssueType::Other,
+    let issues: Vec<LtIssue> = api_response
+        .matches
+        .into_iter()
+        .map(|m| {
+            let issue_type = match m.rule.issue_type.as_deref() {
+                Some("misspelling") => IssueType::Misspelling,
+                Some("grammar") => IssueType::Grammar,
+                Some("typographical") => IssueType::Typographical,
+                Some("style") => IssueType::Style,
+                Some("punctuation") => IssueType::Punctuation,
+                _ => {
+                    // Fallback basierend auf Kategorie
+                    match m.rule.category.id.as_str() {
+                        "TYPOS" | "SPELLING" => IssueType::Misspelling,
+                        "GRAMMAR" | "MISC" => IssueType::Grammar,
+                        "PUNCTUATION" => IssueType::Punctuation,
+                        "STYLE" | "REDUNDANCY" => IssueType::Style,
+                        "TYPOGRAPHY" => IssueType::Typographical,
+                        _ => IssueType::Other,
+                    }
                 }
+            };
+
+            LtIssue {
+                message: m.message,
+                short_message: m.short_message,
+                offset: m.offset,
+                length: m.length,
+                context_text: m.context.text,
+                replacements: m
+                    .replacements
+                    .into_iter()
+                    .map(|r| r.value)
+                    .take(5)
+                    .collect(),
+                rule_id: m.rule.id,
+                issue_type,
+                category: m.rule.category.name,
             }
-        };
-        
-        LtIssue {
-            message: m.message,
-            short_message: m.short_message,
-            offset: m.offset,
-            length: m.length,
-            context_text: m.context.text,
-            replacements: m.replacements.into_iter().map(|r| r.value).take(5).collect(),
-            rule_id: m.rule.id,
-            issue_type,
-            category: m.rule.category.name,
-        }
-    }).collect();
-    
+        })
+        .collect();
+
     log::info!("[LanguageTool] Found {} issues", issues.len());
-    
+
     Ok(issues)
 }
 
@@ -282,14 +295,17 @@ pub async fn test_connection(config: &LtConfig) -> Result<bool> {
         lang if lang.starts_with("de") => "Das ist ein Testsatz mit einem Felher.",
         _ => "This is a test sentence with an eror.",
     };
-    
+
     let mut test_config = config.clone();
     test_config.enabled = true;
-    
+
     match check_text(test_text, &test_config).await {
         Ok(issues) => {
             // Sollte mindestens einen Fehler finden (Felher/eror)
-            log::info!("[LanguageTool] Connection test: {} issues found", issues.len());
+            log::info!(
+                "[LanguageTool] Connection test: {} issues found",
+                issues.len()
+            );
             Ok(!issues.is_empty())
         }
         Err(e) => {
@@ -302,14 +318,14 @@ pub async fn test_connection(config: &LtConfig) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_issue_type_colors() {
         assert_eq!(IssueType::Misspelling.color(), "#e53e3e");
         assert_eq!(IssueType::Grammar.color(), "#3182ce");
         assert_eq!(IssueType::Style.color(), "#d69e2e");
     }
-    
+
     #[test]
     fn test_default_config() {
         let config = LtConfig::default();

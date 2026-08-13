@@ -5,8 +5,10 @@ fn main() {
     {
         println!("cargo:rustc-env=MACOSX_DEPLOYMENT_TARGET=11.0");
         // SAFETY: Setting env var before any threads are spawned
-        unsafe { std::env::set_var("MACOSX_DEPLOYMENT_TARGET", "11.0"); }
+        unsafe {
+            std::env::set_var("MACOSX_DEPLOYMENT_TARGET", "11.0");
+        }
     }
-    
+
     tauri_build::build()
 }

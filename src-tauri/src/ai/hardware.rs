@@ -1,8 +1,8 @@
 //! Hardware Detection Module
 //! Erkennt System-Ressourcen (RAM, GPU) und empfiehlt passende Modelle
 
-use sysinfo::System;
 use crate::ai::registry::{self, ModelInfo, ModelKind};
+use sysinfo::System;
 
 /// Hardware capabilities detected on the system
 #[derive(Debug, Clone, serde::Serialize)]
@@ -30,26 +30,27 @@ impl HardwareInfo {
     pub fn detect() -> Self {
         let mut sys = System::new_all();
         sys.refresh_all();
-        
+
         let total_ram_mb = sys.total_memory() / (1024 * 1024);
         let available_ram_mb = sys.available_memory() / (1024 * 1024);
         let cpu_cores = sys.cpus().len();
-        
+
         // CPU brand from first core
-        let cpu_brand = sys.cpus()
+        let cpu_brand = sys
+            .cpus()
             .first()
             .map(|c| c.brand().to_string())
             .unwrap_or_else(|| "Unknown CPU".to_string());
-        
+
         // Metal detection (Apple Silicon)
         let has_metal = Self::detect_metal();
-        
+
         // CUDA detection (NVIDIA)
         let has_cuda = Self::detect_cuda();
-        
-    // Determine which models can run
-    let can_run_large_model = total_ram_mb >= 8192; // 8GB tier
-        
+
+        // Determine which models can run
+        let can_run_large_model = total_ram_mb >= 8192; // 8GB tier
+
         // Recommend model based on available resources
         let recommended_model = if has_metal {
             "gemma-4-e2b-mlx-q6".to_string()
@@ -58,7 +59,7 @@ impl HardwareInfo {
         } else {
             "mistral-7b".to_string()
         };
-        
+
         Self {
             total_ram_mb,
             available_ram_mb,
@@ -70,7 +71,7 @@ impl HardwareInfo {
             can_run_large_model,
         }
     }
-    
+
     /// Check if Apple Metal is available
     fn detect_metal() -> bool {
         #[cfg(target_os = "macos")]
@@ -79,15 +80,15 @@ impl HardwareInfo {
             // We check for arm64 architecture as a proxy for Apple Silicon
             #[cfg(target_arch = "aarch64")]
             return true;
-            
+
             #[cfg(not(target_arch = "aarch64"))]
             return false; // Intel Macs - Metal exists but less performant for LLM
         }
-        
+
         #[cfg(not(target_os = "macos"))]
         false
     }
-    
+
     /// Check if CUDA is available
     fn detect_cuda() -> bool {
         #[cfg(target_os = "windows")]
@@ -96,22 +97,22 @@ impl HardwareInfo {
             // This is a simple heuristic - proper detection would use CUDA API
             std::path::Path::new("C:\\Windows\\System32\\nvcuda.dll").exists()
         }
-        
+
         #[cfg(target_os = "linux")]
         {
             std::path::Path::new("/usr/lib/x86_64-linux-gnu/libcuda.so").exists()
                 || std::path::Path::new("/usr/local/cuda/lib64/libcuda.so").exists()
         }
-        
+
         #[cfg(target_os = "macos")]
         false // No CUDA on macOS
     }
-    
+
     /// Check if a specific model can run on this hardware
     pub fn can_run_model(&self, model: &ModelInfo) -> bool {
         self.total_ram_mb >= model.ram_required_mb as u64
     }
-    
+
     /// Get list of models that can run on this hardware
     pub fn available_models(&self) -> Vec<&'static ModelInfo> {
         registry::REGISTRY
@@ -119,7 +120,7 @@ impl HardwareInfo {
             .filter(|m| self.can_run_model(m))
             .collect()
     }
-    
+
     /// Get acceleration backend description
     pub fn acceleration_backend(&self) -> &'static str {
         if self.has_metal {
@@ -135,14 +136,14 @@ impl HardwareInfo {
 /// Get optimal inference parameters based on hardware
 pub fn optimal_params(hardware: &HardwareInfo, model_kind: &ModelKind) -> InferenceParams {
     let base_threads = (hardware.cpu_cores / 2).max(2).min(8);
-    
+
     // More threads for CPU-only, fewer when GPU accelerated
     let n_threads = if hardware.has_metal || hardware.has_cuda {
         base_threads.min(4)
     } else {
         base_threads
     };
-    
+
     // Batch size based on available RAM
     let n_batch = if hardware.available_ram_mb > 8192 {
         512
@@ -151,19 +152,23 @@ pub fn optimal_params(hardware: &HardwareInfo, model_kind: &ModelKind) -> Infere
     } else {
         128
     };
-    
+
     // Context size based on model
     let n_ctx = match model_kind {
         ModelKind::Gemma4E2B => 16384,
         ModelKind::Mistral7B => 8192,
     };
-    
+
     InferenceParams {
         n_threads,
         n_batch,
         n_ctx,
         use_gpu: hardware.has_metal || hardware.has_cuda,
-        n_gpu_layers: if hardware.has_metal || hardware.has_cuda { 99 } else { 0 },
+        n_gpu_layers: if hardware.has_metal || hardware.has_cuda {
+            99
+        } else {
+            0
+        },
     }
 }
 
@@ -180,7 +185,7 @@ pub struct InferenceParams {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_hardware_detection() {
         let info = HardwareInfo::detect();

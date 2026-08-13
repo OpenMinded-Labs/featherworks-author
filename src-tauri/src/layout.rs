@@ -1,11 +1,11 @@
 //! Layout & Export System
-//! 
+//!
 //! Verwendet Typst für professionelles Buchdesign und Export in PDF/EPUB/DOCX/RTF
 
-use std::path::Path;
-use serde::{Deserialize, Serialize};
-use rusqlite::Connection;
 use chrono::Utc;
+use rusqlite::Connection;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 // ============================================================
 // Layout Settings & Presets
@@ -16,13 +16,13 @@ pub struct LayoutSettings {
     pub id: String,
     #[serde(rename = "presetId")]
     pub preset_id: Option<String>,
-    
+
     // Page dimensions (in mm)
     #[serde(rename = "pageWidth")]
     pub page_width: f64,
     #[serde(rename = "pageHeight")]
     pub page_height: f64,
-    
+
     // Margins (in mm)
     #[serde(rename = "marginTop")]
     pub margin_top: f64,
@@ -35,7 +35,7 @@ pub struct LayoutSettings {
     #[serde(rename = "mirrorMargins")]
     #[serde(default = "default_true")]
     pub mirror_margins: bool,
-    
+
     // Typography - Body Text
     #[serde(rename = "fontFamily")]
     pub font_family: String,
@@ -47,38 +47,38 @@ pub struct LayoutSettings {
     pub paragraph_spacing: f64,
     #[serde(rename = "firstLineIndent")]
     pub first_line_indent: f64,
-    
+
     // Typography - Headers & Running Headers
     #[serde(rename = "headerFont")]
-    pub header_font: Option<String>,  // Running headers (Kolumnentitel)
+    pub header_font: Option<String>, // Running headers (Kolumnentitel)
     #[serde(rename = "headerFontSize")]
     #[serde(default = "default_header_font_size")]
     pub header_font_size: f64,
-    
+
     // Typography - Page Numbers
     #[serde(rename = "pageNumberFont")]
     pub page_number_font: Option<String>,
     #[serde(rename = "pageNumberFontSize")]
     #[serde(default = "default_page_number_font_size")]
     pub page_number_font_size: f64,
-    
+
     // Typography - Title Page
     #[serde(rename = "titlePageTitleFont")]
-    pub title_page_title_font: Option<String>,  // Buchtitel
+    pub title_page_title_font: Option<String>, // Buchtitel
     #[serde(rename = "titlePageTitleSize")]
     #[serde(default = "default_title_page_title_size")]
     pub title_page_title_size: f64,
     #[serde(rename = "titlePageAuthorFont")]
-    pub title_page_author_font: Option<String>,  // Autorenname
+    pub title_page_author_font: Option<String>, // Autorenname
     #[serde(rename = "titlePageAuthorSize")]
     #[serde(default = "default_title_page_author_size")]
     pub title_page_author_size: f64,
     #[serde(rename = "titlePagePublisherFont")]
-    pub title_page_publisher_font: Option<String>,  // Verlag
+    pub title_page_publisher_font: Option<String>, // Verlag
     #[serde(rename = "titlePagePublisherSize")]
     #[serde(default = "default_title_page_publisher_size")]
     pub title_page_publisher_size: f64,
-    
+
     // Typography - Table of Contents
     #[serde(rename = "tocFont")]
     pub toc_font: Option<String>,
@@ -86,16 +86,16 @@ pub struct LayoutSettings {
     #[serde(default = "default_toc_font_size")]
     pub toc_font_size: f64,
     #[serde(rename = "tocTitleFont")]
-    pub toc_title_font: Option<String>,  // "Inhalt" heading
+    pub toc_title_font: Option<String>, // "Inhalt" heading
     #[serde(rename = "tocTitleSize")]
     #[serde(default = "default_toc_title_size")]
     pub toc_title_size: f64,
-    
+
     // Text alignment
     #[serde(rename = "textAlign")]
     #[serde(default = "default_text_align")]
     pub text_align: String, // "justify", "left", "right"
-    
+
     // Widow/Orphan control (Hurenkinder/Schusterjungen)
     #[serde(rename = "preventWidows")]
     #[serde(default = "default_true")]
@@ -103,7 +103,7 @@ pub struct LayoutSettings {
     #[serde(rename = "preventOrphans")]
     #[serde(default = "default_true")]
     pub prevent_orphans: bool,
-    
+
     // Hyphenation (Silbentrennung)
     #[serde(rename = "hyphenation")]
     #[serde(default = "default_true")]
@@ -111,7 +111,7 @@ pub struct LayoutSettings {
     #[serde(rename = "hyphenationLang")]
     #[serde(default = "default_hyphenation_lang")]
     pub hyphenation_lang: String, // "de", "en", "fr", etc.
-    
+
     // OpenType features
     #[serde(rename = "ligatures")]
     #[serde(default = "default_true")]
@@ -122,7 +122,7 @@ pub struct LayoutSettings {
     #[serde(rename = "opticalMarginAlign")]
     #[serde(default)]
     pub optical_margin_align: bool, // Optischer Randausgleich
-    
+
     // Headers & Footers
     #[serde(rename = "headerText")]
     pub header_text: Option<String>,
@@ -130,7 +130,7 @@ pub struct LayoutSettings {
     pub show_page_numbers: bool,
     #[serde(rename = "pageNumberPosition")]
     pub page_number_position: String, // "bottom-center", "bottom-outside", "top-outside"
-    
+
     // Running headers (Kolumnentitel)
     #[serde(rename = "runningHeaderLeft")]
     pub running_header_left: Option<String>, // z.B. Autorname
@@ -139,7 +139,7 @@ pub struct LayoutSettings {
     #[serde(rename = "runningHeaderStyle")]
     #[serde(default = "default_running_header_style")]
     pub running_header_style: String, // "author-title", "title-chapter", "chapter-only", "none"
-    
+
     // Chapters
     #[serde(rename = "chapterStartPage")]
     pub chapter_start_page: String, // "any", "odd", "even"
@@ -152,7 +152,7 @@ pub struct LayoutSettings {
     #[serde(rename = "dropCapLines")]
     #[serde(default = "default_drop_cap_lines")]
     pub drop_cap_lines: u8, // Anzahl Zeilen für Initiale (2-4)
-    
+
     // Front matter (Titelei)
     #[serde(rename = "includeHalfTitle")]
     #[serde(default = "default_true")]
@@ -173,7 +173,7 @@ pub struct LayoutSettings {
     pub title_logo_path: Option<String>,
     #[serde(rename = "epigraphAuthor")]
     pub epigraph_author: Option<String>,
-    
+
     // Table of contents
     #[serde(rename = "includeToc")]
     #[serde(default = "default_true")]
@@ -184,7 +184,7 @@ pub struct LayoutSettings {
     #[serde(rename = "tocIncludeScenes")]
     #[serde(default)]
     pub toc_include_scenes: bool,
-    
+
     // Scene breaks
     #[serde(rename = "sceneBreakStyle")]
     #[serde(default = "default_scene_break_style")]
@@ -195,20 +195,48 @@ pub struct LayoutSettings {
     pub scene_break_image_path: Option<String>,
 }
 
-fn default_true() -> bool { true }
-fn default_text_align() -> String { "justify".to_string() }
-fn default_hyphenation_lang() -> String { "de".to_string() }
-fn default_running_header_style() -> String { "author-title".to_string() }
-fn default_drop_cap_lines() -> u8 { 3 }
-fn default_toc_title() -> String { "Inhalt".to_string() }
-fn default_scene_break_style() -> String { "asterism".to_string() }
-fn default_header_font_size() -> f64 { 9.0 }
-fn default_page_number_font_size() -> f64 { 10.0 }
-fn default_title_page_title_size() -> f64 { 28.0 }
-fn default_title_page_author_size() -> f64 { 16.0 }
-fn default_title_page_publisher_size() -> f64 { 12.0 }
-fn default_toc_font_size() -> f64 { 11.0 }
-fn default_toc_title_size() -> f64 { 16.0 }
+fn default_true() -> bool {
+    true
+}
+fn default_text_align() -> String {
+    "justify".to_string()
+}
+fn default_hyphenation_lang() -> String {
+    "de".to_string()
+}
+fn default_running_header_style() -> String {
+    "author-title".to_string()
+}
+fn default_drop_cap_lines() -> u8 {
+    3
+}
+fn default_toc_title() -> String {
+    "Inhalt".to_string()
+}
+fn default_scene_break_style() -> String {
+    "asterism".to_string()
+}
+fn default_header_font_size() -> f64 {
+    9.0
+}
+fn default_page_number_font_size() -> f64 {
+    10.0
+}
+fn default_title_page_title_size() -> f64 {
+    28.0
+}
+fn default_title_page_author_size() -> f64 {
+    16.0
+}
+fn default_title_page_publisher_size() -> f64 {
+    12.0
+}
+fn default_toc_font_size() -> f64 {
+    11.0
+}
+fn default_toc_title_size() -> f64 {
+    16.0
+}
 
 impl Default for LayoutSettings {
     fn default() -> Self {
@@ -407,31 +435,46 @@ fn get_scene_break_symbol(settings: &LayoutSettings) -> &str {
 
 /// Generate a Typst template from layout settings with professional typography
 pub fn generate_typst_template(settings: &LayoutSettings, title: &str, author: &str) -> String {
-    let justify = if settings.text_align == "justify" { "true" } else { "false" };
+    let justify = if settings.text_align == "justify" {
+        "true"
+    } else {
+        "false"
+    };
     let scene_break = get_scene_break_symbol(settings);
     let scene_break_image = settings.scene_break_image_path.as_ref();
-    
+
     // Typography settings for headers and page numbers
-    let header_font_setting = settings.header_font.as_ref()
+    let header_font_setting = settings
+        .header_font
+        .as_ref()
         .map(|f| format!(", font: \"{}\"", f))
         .unwrap_or_default();
     let header_size = settings.header_font_size;
-    let page_number_font_setting = settings.page_number_font.as_ref()
+    let page_number_font_setting = settings
+        .page_number_font
+        .as_ref()
         .map(|f| format!(", font: \"{}\"", f))
         .unwrap_or_default();
     let page_number_size = settings.page_number_font_size;
-    
+
     // Running header logic
     let header_code = match settings.running_header_style.as_str() {
-        "author-title" => format!(r#"
+        "author-title" => format!(
+            r#"
     if counter(page).get().first() > 4 {{
       if calc.odd(counter(page).get().first()) {{
         align(right)[#text(size: {header_size}pt, style: "italic"{header_font})[{title}]]
       }} else {{
         align(left)[#text(size: {header_size}pt, style: "italic"{header_font})[{author}]]
       }}
-    }}"#, title = title, author = author, header_size = header_size, header_font = header_font_setting),
-        "title-chapter" => format!(r#"
+    }}"#,
+            title = title,
+            author = author,
+            header_size = header_size,
+            header_font = header_font_setting
+        ),
+        "title-chapter" => format!(
+            r#"
     if counter(page).get().first() > 4 {{
       let current-chapter = query(heading.where(level: 1).before(here()))
       if current-chapter.len() > 0 {{
@@ -441,39 +484,58 @@ pub fn generate_typst_template(settings: &LayoutSettings, title: &str, author: &
           align(left)[#text(size: {header_size}pt, style: "italic"{header_font})[#current-chapter.last().body]]
         }}
       }}
-    }}"#, header_size = header_size, header_font = header_font_setting),
-        "chapter-only" => format!(r#"
+    }}"#,
+            header_size = header_size,
+            header_font = header_font_setting
+        ),
+        "chapter-only" => format!(
+            r#"
     if counter(page).get().first() > 4 {{
       let current-chapter = query(heading.where(level: 1).before(here()))
       if current-chapter.len() > 0 {{
         align(center)[#text(size: {header_size}pt, style: "italic"{header_font})[#current-chapter.last().body]]
       }}
-    }}"#, header_size = header_size, header_font = header_font_setting),
+    }}"#,
+            header_size = header_size,
+            header_font = header_font_setting
+        ),
         _ => "[]".to_string(),
     };
-    
+
     // Footer with page numbers
     let footer_code = if settings.show_page_numbers {
         match settings.page_number_position.as_str() {
-            "bottom-center" => format!(r#"align(center)[#text(size: {size}pt{font})[#counter(page).display()]]"#, 
-                size = page_number_size, font = page_number_font_setting),
-            "bottom-outside" => format!(r#"if calc.odd(counter(page).get().first()) {{ align(right)[#text(size: {size}pt{font})[#counter(page).display()]] }} else {{ align(left)[#text(size: {size}pt{font})[#counter(page).display()]] }}"#, 
-                size = page_number_size, font = page_number_font_setting),
+            "bottom-center" => format!(
+                r#"align(center)[#text(size: {size}pt{font})[#counter(page).display()]]"#,
+                size = page_number_size,
+                font = page_number_font_setting
+            ),
+            "bottom-outside" => format!(
+                r#"if calc.odd(counter(page).get().first()) {{ align(right)[#text(size: {size}pt{font})[#counter(page).display()]] }} else {{ align(left)[#text(size: {size}pt{font})[#counter(page).display()]] }}"#,
+                size = page_number_size,
+                font = page_number_font_setting
+            ),
             "top-outside" => "[]".to_string(), // Handled in header
-            _ => format!(r#"align(center)[#text(size: {size}pt{font})[#counter(page).display()]]"#, 
-                size = page_number_size, font = page_number_font_setting),
+            _ => format!(
+                r#"align(center)[#text(size: {size}pt{font})[#counter(page).display()]]"#,
+                size = page_number_size,
+                font = page_number_font_setting
+            ),
         }
     } else {
         "[]".to_string()
     };
-    
+
     // Hyphenation settings
     let hyphenation_code = if settings.hyphenation {
-        format!(r#"#set text(lang: "{}", hyphenate: true)"#, settings.hyphenation_lang)
+        format!(
+            r#"#set text(lang: "{}", hyphenate: true)"#,
+            settings.hyphenation_lang
+        )
     } else {
         "#set text(hyphenate: false)".to_string()
     };
-    
+
     // OpenType features (Typst 0.14+ uses dictionary format)
     let opentype_features = {
         let mut features = Vec::new();
@@ -491,7 +553,8 @@ pub fn generate_typst_template(settings: &LayoutSettings, title: &str, author: &
         }
     };
 
-    format!(r#"// ============================================================
+    format!(
+        r#"// ============================================================
 // Featherworks Author - Typst Template
 // Professional Book Typesetting
 // ============================================================
@@ -629,11 +692,17 @@ pub fn generate_typst_template(settings: &LayoutSettings, title: &str, author: &
         flipped = "false",
         chapter_page = settings.chapter_start_page,
         chapter_size = settings.chapter_title_size,
-        chapter_font = settings.chapter_title_font.as_ref()
+        chapter_font = settings
+            .chapter_title_font
+            .as_ref()
             .map(|f| format!("font: \"{}\"", f))
             .unwrap_or_default(),
         scene_break = scene_break,
-        use_image = if scene_break_image.is_some() && settings.scene_break_style == "image" { "true" } else { "false" },
+        use_image = if scene_break_image.is_some() && settings.scene_break_style == "image" {
+            "true"
+        } else {
+            "false"
+        },
         scene_image = scene_break_image.unwrap_or(&"".to_string()),
         drop_lines = settings.drop_cap_lines,
         drop_fontsize = settings.font_size * (settings.drop_cap_lines as f64) * 1.2,
@@ -648,27 +717,34 @@ pub fn manuscript_to_typst(
     author: &str,
 ) -> String {
     let template = generate_typst_template(settings, title, author);
-    
+
     let mut content = template;
 
-    let title_logo_block = settings.title_logo_path.as_ref().map(|path| {
-        format!(
-            "  #v(2em)\n  #image(\"{}\", width: 60pt)\n  #v(2em)",
-            path.replace("\\", "\\\\")
-        )
-    }).unwrap_or_default();
-    
+    let title_logo_block = settings
+        .title_logo_path
+        .as_ref()
+        .map(|path| {
+            format!(
+                "  #v(2em)\n  #image(\"{}\", width: 60pt)\n  #v(2em)",
+                path.replace("\\", "\\\\")
+            )
+        })
+        .unwrap_or_default();
+
     // ============================================================
     // FRONT MATTER (Titelei)
     // ============================================================
-    
+
     // 1. Half-title page (Schmutztitel) - just the title, no author
     if settings.include_half_title {
-        let half_title_font = settings.title_page_title_font.as_ref()
+        let half_title_font = settings
+            .title_page_title_font
+            .as_ref()
             .or(settings.chapter_title_font.as_ref())
             .map(|f| format!(", font: \"{}\"", f))
             .unwrap_or_default();
-        content.push_str(&format!(r#"
+        content.push_str(&format!(
+            r#"
 // Schmutztitel (Half-Title)
 #set page(header: none, footer: none)
 #align(center + horizon)[
@@ -677,25 +753,35 @@ pub fn manuscript_to_typst(
 #pagebreak()
 #pagebreak() // Verso blank
 
-"#, title = title, half_title_font = half_title_font));
+"#,
+            title = title,
+            half_title_font = half_title_font
+        ));
     }
-    
+
     // 2. Title page (Haupttitel) - full title with author
     if settings.include_title_page {
-        let title_font = settings.title_page_title_font.as_ref()
+        let title_font = settings
+            .title_page_title_font
+            .as_ref()
             .or(settings.chapter_title_font.as_ref())
             .map(|f| format!(", font: \"{}\"", f))
             .unwrap_or_default();
         let title_size = settings.title_page_title_size;
-        let author_font = settings.title_page_author_font.as_ref()
+        let author_font = settings
+            .title_page_author_font
+            .as_ref()
             .map(|f| format!(", font: \"{}\"", f))
             .unwrap_or_default();
         let author_size = settings.title_page_author_size;
-        let publisher_font = settings.title_page_publisher_font.as_ref()
+        let publisher_font = settings
+            .title_page_publisher_font
+            .as_ref()
             .map(|f| format!(", font: \"{}\"", f))
             .unwrap_or_default();
         let publisher_size = settings.title_page_publisher_size;
-        content.push_str(&format!(r#"
+        content.push_str(&format!(
+            r#"
 // Haupttitel (Title Page)
 #set page(header: none, footer: none)
 #align(center + horizon)[
@@ -711,12 +797,19 @@ pub fn manuscript_to_typst(
 ]
 #pagebreak()
 
-"#, title = title, author = author, title_logo_block = title_logo_block,
-   title_size = title_size, title_font = title_font,
-   author_size = author_size, author_font = author_font,
-   publisher_size = publisher_size, publisher_font = publisher_font));
+"#,
+            title = title,
+            author = author,
+            title_logo_block = title_logo_block,
+            title_size = title_size,
+            title_font = title_font,
+            author_size = author_size,
+            author_font = author_font,
+            publisher_size = publisher_size,
+            publisher_font = publisher_font
+        ));
     }
-    
+
     // 3. Copyright page (Impressum)
     if settings.include_copyright {
         let default_copyright = format!(
@@ -724,9 +817,13 @@ pub fn manuscript_to_typst(
             chrono::Utc::now().format("%Y"),
             author
         );
-        let copyright_text = settings.copyright_text.as_deref().unwrap_or(&default_copyright);
-        
-        content.push_str(&format!(r#"
+        let copyright_text = settings
+            .copyright_text
+            .as_deref()
+            .unwrap_or(&default_copyright);
+
+        content.push_str(&format!(
+            r#"
 // Impressum (Copyright Page)
 #set page(header: none, footer: none)
 #align(left + bottom)[
@@ -736,12 +833,15 @@ pub fn manuscript_to_typst(
 ]
 #pagebreak()
 
-"#, copyright = copyright_text.replace('\n', "\\\n")));
+"#,
+            copyright = copyright_text.replace('\n', "\\\n")
+        ));
     }
-    
+
     // 4. Dedication (Widmung)
     if let Some(dedication) = &settings.dedication {
-        content.push_str(&format!(r#"
+        content.push_str(&format!(
+            r#"
 // Widmung (Dedication)
 #set page(header: none, footer: none)
 #align(center + horizon)[
@@ -751,13 +851,16 @@ pub fn manuscript_to_typst(
 #pagebreak()
 #pagebreak() // Verso blank
 
-"#, dedication = dedication));
+"#,
+            dedication = dedication
+        ));
     }
-    
+
     // 5. Epigraph (Motto)
     if let Some(epigraph) = &settings.epigraph {
         let epigraph_author = settings.epigraph_author.as_deref().unwrap_or("");
-        content.push_str(&format!(r#"
+        content.push_str(&format!(
+            r#"
 // Motto (Epigraph)
 #set page(header: none, footer: none)
 #align(right + horizon)[
@@ -773,21 +876,29 @@ pub fn manuscript_to_typst(
 ]
 #pagebreak()
 
-"#, epigraph = epigraph, epigraph_author = epigraph_author));
+"#,
+            epigraph = epigraph,
+            epigraph_author = epigraph_author
+        ));
     }
-    
+
     // 6. Table of Contents (Inhaltsverzeichnis)
     if settings.include_toc {
-        let toc_title_font = settings.toc_title_font.as_ref()
+        let toc_title_font = settings
+            .toc_title_font
+            .as_ref()
             .or(settings.chapter_title_font.as_ref())
             .map(|f| format!(", font: \"{}\"", f))
             .unwrap_or_default();
         let toc_title_size = settings.toc_title_size;
-        let toc_font = settings.toc_font.as_ref()
+        let toc_font = settings
+            .toc_font
+            .as_ref()
             .map(|f| format!("font: \"{}\", ", f))
             .unwrap_or_default();
         let toc_font_size = settings.toc_font_size;
-        content.push_str(&format!(r#"
+        content.push_str(&format!(
+            r#"
 // Inhaltsverzeichnis (Table of Contents)
 #set page(header: none, footer: none)
 #align(center)[
@@ -805,7 +916,7 @@ pub fn manuscript_to_typst(
 #set text(font: "{body_font}", size: {body_font_size}pt)
 #pagebreak(to: "odd")
 
-"#, 
+"#,
             toc_title = settings.toc_title,
             toc_title_font = toc_title_font,
             toc_title_size = toc_title_size,
@@ -816,55 +927,60 @@ pub fn manuscript_to_typst(
             body_font_size = settings.font_size,
         ));
     }
-    
+
     // Reset page counter for main content
-    content.push_str(r#"
+    content.push_str(
+        r#"
 // ============================================================
 // MAIN CONTENT
 // ============================================================
 #counter(page).update(1)
 
-"#);
-    
+"#,
+    );
+
     // ============================================================
     // CHAPTERS
     // ============================================================
     for (chapter_idx, chapter) in chapters.iter().enumerate() {
         // Clean chapter title
         content.push_str(&format!("= {}\n\n", clean_text_for_typst(&chapter.title)));
-        
+
         for (scene_idx, scene) in chapter.scenes.iter().enumerate() {
             // Scene break between scenes
             if scene_idx > 0 {
                 content.push_str("#scene-break\n\n");
             }
-            
+
             // Convert paragraphs - handle both \n\n and single \n as paragraph separators
             // First, normalize line endings and remove trailing whitespace
-            let normalized = scene.content
-                .replace("\r\n", "\n")  // Windows line endings
-                .replace("\r", "\n");   // Old Mac line endings
-            
+            let normalized = scene
+                .content
+                .replace("\r\n", "\n") // Windows line endings
+                .replace("\r", "\n"); // Old Mac line endings
+
             // Split by double newlines first, then by single newlines
             // This ensures paragraphs are properly separated
             let paragraphs: Vec<String> = if normalized.contains("\n\n") {
                 // Standard paragraph separation
-                normalized.split("\n\n")
+                normalized
+                    .split("\n\n")
                     .map(|p| p.trim().to_string())
                     .filter(|p| !p.is_empty())
                     .collect()
             } else {
                 // Single newlines - treat each line as a paragraph
-                normalized.split('\n')
+                normalized
+                    .split('\n')
                     .map(|p| p.trim().to_string())
                     .filter(|p| !p.is_empty())
                     .collect()
             };
-            
+
             for (para_idx, para) in paragraphs.iter().enumerate() {
                 // Clean the paragraph text from editor artifacts
                 let cleaned_para = clean_text_for_typst(&para);
-                
+
                 // First paragraph of chapter gets drop cap
                 if scene_idx == 0 && para_idx == 0 && settings.drop_cap_enabled {
                     // Pass text as a string literal to drop-cap
@@ -877,7 +993,7 @@ pub fn manuscript_to_typst(
             }
         }
     }
-    
+
     content
 }
 
@@ -898,23 +1014,20 @@ pub struct SceneContent {
 // ============================================================
 
 /// Export to PDF using Typst CLI or embedded compilation
-pub fn export_to_pdf(
-    typst_content: &str,
-    output_path: &Path,
-) -> Result<(), String> {
+pub fn export_to_pdf(typst_content: &str, output_path: &Path) -> Result<(), String> {
     log::info!("Exporting to PDF: {:?}", output_path);
     log::debug!("Typst content length: {} chars", typst_content.len());
-    
+
     // Strategy 1: Try Typst CLI (most reliable)
     if let Ok(result) = export_pdf_via_cli(typst_content, output_path) {
         return Ok(result);
     }
-    
+
     // Strategy 2: Fallback - save .typ file for manual compilation
     let typ_path = output_path.with_extension("typ");
     std::fs::write(&typ_path, typst_content)
         .map_err(|e| format!("Failed to write Typst source: {}", e))?;
-    
+
     Err(format!(
         "PDF export requires Typst CLI. Please install it:\n\
         - macOS: brew install typst\n\
@@ -929,42 +1042,38 @@ pub fn export_to_pdf(
 /// Export PDF using Typst CLI
 fn export_pdf_via_cli(typst_content: &str, output_path: &Path) -> Result<(), String> {
     use std::process::Command;
-    
+
     // Create a temp file for the Typst source
     let temp_dir = std::env::temp_dir();
     let temp_typ = temp_dir.join(format!("featherworks_{}.typ", nanoid::nanoid!(8)));
-    
+
     std::fs::write(&temp_typ, typst_content)
         .map_err(|e| format!("Failed to write temp file: {}", e))?;
-    
+
     // Try multiple paths for typst CLI (Homebrew, system, etc.)
     let typst_paths: Vec<&str> = if cfg!(target_os = "windows") {
         vec!["typst.exe"]
     } else if cfg!(target_os = "macos") {
         vec![
-            "/opt/homebrew/bin/typst",  // Homebrew on Apple Silicon
-            "/usr/local/bin/typst",      // Homebrew on Intel Mac
-            "typst",                      // System PATH
+            "/opt/homebrew/bin/typst", // Homebrew on Apple Silicon
+            "/usr/local/bin/typst",    // Homebrew on Intel Mac
+            "typst",                   // System PATH
         ]
     } else {
-        vec![
-            "/usr/local/bin/typst",
-            "/usr/bin/typst",
-            "typst",
-        ]
+        vec!["/usr/local/bin/typst", "/usr/bin/typst", "typst"]
     };
-    
+
     let mut last_error = String::new();
-    
+
     for typst_cmd in &typst_paths {
         println!("[typst-cli] Trying typst at: {}", typst_cmd);
-        
+
         let output = Command::new(typst_cmd)
             .arg("compile")
             .arg(&temp_typ)
             .arg(output_path)
             .output();
-        
+
         match output {
             Ok(result) => {
                 println!("[typst-cli] Command executed, status: {:?}", result.status);
@@ -985,7 +1094,12 @@ fn export_pdf_via_cli(typst_content: &str, output_path: &Path) -> Result<(), Str
                 }
             }
             Err(e) => {
-                println!("[typst-cli] Error running {}: {} (kind: {:?})", typst_cmd, e, e.kind());
+                println!(
+                    "[typst-cli] Error running {}: {} (kind: {:?})",
+                    typst_cmd,
+                    e,
+                    e.kind()
+                );
                 if e.kind() == std::io::ErrorKind::NotFound {
                     last_error = format!("Typst not found at {}", typst_cmd);
                     continue; // Try next path
@@ -995,12 +1109,15 @@ fn export_pdf_via_cli(typst_content: &str, output_path: &Path) -> Result<(), Str
             }
         }
     }
-    
+
     // Clean up temp file
     let _ = std::fs::remove_file(&temp_typ);
-    
+
     println!("[typst-cli] All paths failed. Last error: {}", last_error);
-    Err(format!("Typst CLI not found. Tried: {:?}. Last error: {}", typst_paths, last_error))
+    Err(format!(
+        "Typst CLI not found. Tried: {:?}. Last error: {}",
+        typst_paths, last_error
+    ))
 }
 
 /// Export to EPUB
@@ -1014,23 +1131,23 @@ pub fn export_to_epub(
 ) -> Result<(), String> {
     use epub_builder::{EpubBuilder, EpubContent, ZipLibrary};
     use std::fs::File;
-    
+
     let file = File::create(output_path).map_err(|e| e.to_string())?;
     let zip = ZipLibrary::new().map_err(|e| e.to_string())?;
-    
+
     let mut builder = EpubBuilder::new(zip).map_err(|e| e.to_string())?;
-    
+
     builder
         .metadata("title", title)
         .map_err(|e| e.to_string())?
         .metadata("author", author)
         .map_err(|e| e.to_string())?;
-    
+
     // Add cover image if provided
     if let Some(cover) = cover_path {
-        let cover_data = std::fs::read(cover)
-            .map_err(|e| format!("Failed to read cover image: {}", e))?;
-        
+        let cover_data =
+            std::fs::read(cover).map_err(|e| format!("Failed to read cover image: {}", e))?;
+
         // Determine MIME type from extension
         let mime_type = match Path::new(cover)
             .extension()
@@ -1044,15 +1161,15 @@ pub fn export_to_epub(
             Some("webp") => "image/webp",
             _ => "image/jpeg", // Default
         };
-        
+
         // Add cover image to EPUB
         builder
             .add_cover_image("cover.jpg", cover_data.as_slice(), mime_type)
             .map_err(|e| format!("Failed to add cover: {}", e))?;
-        
+
         log::info!("Added cover image from: {}", cover);
     }
-    
+
     // Add stylesheet
     let css = r#"
 body {
@@ -1078,11 +1195,14 @@ p.first {
     margin: 1em 0;
 }
 "#;
-    builder.stylesheet(css.as_bytes()).map_err(|e| e.to_string())?;
-    
+    builder
+        .stylesheet(css.as_bytes())
+        .map_err(|e| e.to_string())?;
+
     // Add chapters
     for (i, chapter) in chapters.iter().enumerate() {
-        let mut html = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
+        let mut html = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml">
 <head>
@@ -1091,13 +1211,15 @@ p.first {
 </head>
 <body>
 <h1>{}</h1>
-"#, chapter.title, chapter.title);
-        
+"#,
+            chapter.title, chapter.title
+        );
+
         for (j, scene) in chapter.scenes.iter().enumerate() {
             if j > 0 {
                 html.push_str(r#"<p class="scene-break">⁂</p>"#);
             }
-            
+
             for (k, para) in scene.content.split("\n\n").enumerate() {
                 let para = para.trim();
                 if !para.is_empty() {
@@ -1106,21 +1228,18 @@ p.first {
                 }
             }
         }
-        
+
         html.push_str("</body></html>");
-        
-        let content = EpubContent::new(
-            format!("chapter{}.xhtml", i + 1),
-            html.as_bytes(),
-        )
-        .title(&chapter.title)
-        .reftype(epub_builder::ReferenceType::Text);
-        
+
+        let content = EpubContent::new(format!("chapter{}.xhtml", i + 1), html.as_bytes())
+            .title(&chapter.title)
+            .reftype(epub_builder::ReferenceType::Text);
+
         builder.add_content(content).map_err(|e| e.to_string())?;
     }
-    
+
     builder.generate(file).map_err(|e| e.to_string())?;
-    
+
     log::info!("EPUB exported to: {:?}", output_path);
     Ok(())
 }
@@ -1129,19 +1248,19 @@ p.first {
 /// Removes: empty brackets [ ], markdown-style deletions [- ...], etc.
 fn clean_text_for_typst(s: &str) -> String {
     use regex::Regex;
-    
+
     // Remove empty brackets: [ ] or []
     let re_empty = Regex::new(r"\[\s*\]").unwrap();
     let result = re_empty.replace_all(s, "");
-    
+
     // Remove markdown deletion syntax: [- text] -> text
     // This is probably strikethrough or edit marking
     let re_deletion = Regex::new(r"\[-\s*([^\]]*)\]").unwrap();
     let result = re_deletion.replace_all(&result, "$1");
-    
+
     // Remove any remaining single brackets that don't form pairs
     // Be careful here - only remove if they look like artifacts
-    
+
     result.to_string()
 }
 
@@ -1160,49 +1279,63 @@ pub fn export_to_docx(
     author: &str,
 ) -> Result<(), String> {
     use std::io::Write;
-    
+
     // Create a basic DOCX (which is actually a ZIP with XML files)
     let file = std::fs::File::create(output_path).map_err(|e| e.to_string())?;
     let mut zip = zip::ZipWriter::new(file);
-    
-    let options = zip::write::FileOptions::default()
-        .compression_method(zip::CompressionMethod::Deflated);
-    
+
+    let options =
+        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
     // [Content_Types].xml
-    zip.start_file("[Content_Types].xml", options).map_err(|e| e.to_string())?;
-    zip.write_all(DOCX_CONTENT_TYPES.as_bytes()).map_err(|e| e.to_string())?;
-    
+    zip.start_file("[Content_Types].xml", options)
+        .map_err(|e| e.to_string())?;
+    zip.write_all(DOCX_CONTENT_TYPES.as_bytes())
+        .map_err(|e| e.to_string())?;
+
     // _rels/.rels
-    zip.add_directory("_rels/", options).map_err(|e| e.to_string())?;
-    zip.start_file("_rels/.rels", options).map_err(|e| e.to_string())?;
-    zip.write_all(DOCX_RELS.as_bytes()).map_err(|e| e.to_string())?;
-    
+    zip.add_directory("_rels/", options)
+        .map_err(|e| e.to_string())?;
+    zip.start_file("_rels/.rels", options)
+        .map_err(|e| e.to_string())?;
+    zip.write_all(DOCX_RELS.as_bytes())
+        .map_err(|e| e.to_string())?;
+
     // word/_rels/document.xml.rels
-    zip.add_directory("word/", options).map_err(|e| e.to_string())?;
-    zip.add_directory("word/_rels/", options).map_err(|e| e.to_string())?;
-    zip.start_file("word/_rels/document.xml.rels", options).map_err(|e| e.to_string())?;
-    zip.write_all(DOCX_DOCUMENT_RELS.as_bytes()).map_err(|e| e.to_string())?;
-    
+    zip.add_directory("word/", options)
+        .map_err(|e| e.to_string())?;
+    zip.add_directory("word/_rels/", options)
+        .map_err(|e| e.to_string())?;
+    zip.start_file("word/_rels/document.xml.rels", options)
+        .map_err(|e| e.to_string())?;
+    zip.write_all(DOCX_DOCUMENT_RELS.as_bytes())
+        .map_err(|e| e.to_string())?;
+
     // word/document.xml - the main content
     let document_xml = generate_docx_document(chapters, title, author);
-    zip.start_file("word/document.xml", options).map_err(|e| e.to_string())?;
-    zip.write_all(document_xml.as_bytes()).map_err(|e| e.to_string())?;
-    
+    zip.start_file("word/document.xml", options)
+        .map_err(|e| e.to_string())?;
+    zip.write_all(document_xml.as_bytes())
+        .map_err(|e| e.to_string())?;
+
     // word/styles.xml
-    zip.start_file("word/styles.xml", options).map_err(|e| e.to_string())?;
-    zip.write_all(DOCX_STYLES.as_bytes()).map_err(|e| e.to_string())?;
-    
+    zip.start_file("word/styles.xml", options)
+        .map_err(|e| e.to_string())?;
+    zip.write_all(DOCX_STYLES.as_bytes())
+        .map_err(|e| e.to_string())?;
+
     zip.finish().map_err(|e| e.to_string())?;
-    
+
     log::info!("DOCX exported to: {:?}", output_path);
     Ok(())
 }
 
 fn generate_docx_document(chapters: &[ChapterContent], title: &str, author: &str) -> String {
     let mut body = String::new();
-    
+
     // Title
-    body.push_str(&format!(r#"
+    body.push_str(&format!(
+        r#"
 <w:p>
   <w:pPr><w:pStyle w:val="Title"/></w:pPr>
   <w:r><w:t>{}</w:t></w:r>
@@ -1212,42 +1345,54 @@ fn generate_docx_document(chapters: &[ChapterContent], title: &str, author: &str
   <w:r><w:t>{}</w:t></w:r>
 </w:p>
 <w:p><w:r><w:br w:type="page"/></w:r></w:p>
-"#, xml_escape(title), xml_escape(author)));
-    
+"#,
+        xml_escape(title),
+        xml_escape(author)
+    ));
+
     // Chapters
     for chapter in chapters {
-        body.push_str(&format!(r#"
+        body.push_str(&format!(
+            r#"
 <w:p>
   <w:pPr><w:pStyle w:val="Heading1"/></w:pPr>
   <w:r><w:t>{}</w:t></w:r>
 </w:p>
-"#, xml_escape(&chapter.title)));
-        
+"#,
+            xml_escape(&chapter.title)
+        ));
+
         for (i, scene) in chapter.scenes.iter().enumerate() {
             if i > 0 {
-                body.push_str(r#"
+                body.push_str(
+                    r#"
 <w:p>
   <w:pPr><w:jc w:val="center"/></w:pPr>
   <w:r><w:t>⁂</w:t></w:r>
 </w:p>
-"#);
+"#,
+                );
             }
-            
+
             for para in scene.content.split("\n\n") {
                 let para = para.trim();
                 if !para.is_empty() {
-                    body.push_str(&format!(r#"
+                    body.push_str(&format!(
+                        r#"
 <w:p>
   <w:pPr><w:pStyle w:val="BodyText"/></w:pPr>
   <w:r><w:t>{}</w:t></w:r>
 </w:p>
-"#, xml_escape(para)));
+"#,
+                        xml_escape(para)
+                    ));
                 }
             }
         }
     }
-    
-    format!(r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
 <w:body>
 {}
@@ -1256,7 +1401,9 @@ fn generate_docx_document(chapters: &[ChapterContent], title: &str, author: &str
   <w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/>
 </w:sectPr>
 </w:body>
-</w:document>"#, body)
+</w:document>"#,
+        body
+    )
 }
 
 fn xml_escape(s: &str) -> String {
@@ -1318,56 +1465,47 @@ pub fn export_to_rtf(
     author: &str,
 ) -> Result<(), String> {
     use std::io::Write;
-    
+
     let mut rtf = String::from(r"{\rtf1\ansi\deff0");
-    
+
     // Font table
     rtf.push_str(r"{\fonttbl{\f0\froman Times New Roman;}}");
-    
+
     // Document settings
     rtf.push_str(r"\paperw11906\paperh16838\margl1440\margr1440\margt1440\margb1440");
-    
+
     // Title
-    rtf.push_str(&format!(
-        r"\pard\qc\b\fs48 {}\b0\par",
-        rtf_escape(title)
-    ));
-    rtf.push_str(&format!(
-        r"\pard\qc\fs28 {}\par\page",
-        rtf_escape(author)
-    ));
-    
+    rtf.push_str(&format!(r"\pard\qc\b\fs48 {}\b0\par", rtf_escape(title)));
+    rtf.push_str(&format!(r"\pard\qc\fs28 {}\par\page", rtf_escape(author)));
+
     // Chapters
     for chapter in chapters {
         rtf.push_str(&format!(
             r"\pard\qc\b\fs36 {}\b0\par\par",
             rtf_escape(&chapter.title)
         ));
-        
+
         for (i, scene) in chapter.scenes.iter().enumerate() {
             if i > 0 {
                 rtf.push_str(r"\pard\qc\fs22 \u8258?\par\par");
             }
-            
+
             for para in scene.content.split("\n\n") {
                 let para = para.trim();
                 if !para.is_empty() {
-                    rtf.push_str(&format!(
-                        r"\pard\fi360\qj\fs22 {}\par",
-                        rtf_escape(para)
-                    ));
+                    rtf.push_str(&format!(r"\pard\fi360\qj\fs22 {}\par", rtf_escape(para)));
                 }
             }
         }
-        
+
         rtf.push_str(r"\page");
     }
-    
+
     rtf.push('}');
-    
+
     let mut file = std::fs::File::create(output_path).map_err(|e| e.to_string())?;
     file.write_all(rtf.as_bytes()).map_err(|e| e.to_string())?;
-    
+
     log::info!("RTF exported to: {:?}", output_path);
     Ok(())
 }
@@ -1390,7 +1528,7 @@ fn rtf_escape(s: &str) -> String {
 }
 
 /// Export to InDesign-optimized XML (IDML-compatible structure)
-/// 
+///
 /// This generates an XML file that can be easily imported into Adobe InDesign
 /// with proper paragraph styles, character styles, and structure for book layout.
 /// The format uses InDesign Tagged Text XML conventions.
@@ -1401,10 +1539,11 @@ pub fn export_to_indesign_xml(
     author: &str,
     settings: &LayoutSettings,
 ) -> Result<(), String> {
-    use std::io::Write;
     use regex::Regex;
-    
-    let mut xml = String::from(r#"<?xml version="1.0" encoding="UTF-8"?>
+    use std::io::Write;
+
+    let mut xml = String::from(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
 <!-- InDesign-optimized XML Export from FeatherWorks Author -->
 <!-- Import into InDesign: File > Import XML... then map tags to paragraph styles -->
 <!-- 
@@ -1424,10 +1563,12 @@ pub fn export_to_indesign_xml(
 -->
 <document xmlns:aid="http://ns.adobe.com/AdobeInDesign/4.0/"
           xmlns:aid5="http://ns.adobe.com/AdobeInDesign/5.0/">
-"#);
+"#,
+    );
 
     // Document metadata
-    xml.push_str(&format!(r#"
+    xml.push_str(&format!(
+        r#"
   <metadata>
     <title>{}</title>
     <author>{}</author>
@@ -1445,7 +1586,7 @@ pub fn export_to_indesign_xml(
   </metadata>
 
   <content>
-"#, 
+"#,
         xml_escape(title),
         xml_escape(author),
         chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ"),
@@ -1461,18 +1602,22 @@ pub fn export_to_indesign_xml(
     ));
 
     // Title page (as separate section)
-    xml.push_str(&format!(r#"
+    xml.push_str(&format!(
+        r#"
     <section aid:pstyle="FrontMatter">
       <title-page>
         <book-title aid:pstyle="BookTitle">{}</book-title>
         <book-author aid:pstyle="BookAuthor">{}</book-author>
       </title-page>
     </section>
-"#, xml_escape(title), xml_escape(author)));
+"#,
+        xml_escape(title),
+        xml_escape(author)
+    ));
 
     // Regex for scene breaks in text
     let scene_break_re = Regex::new(r"^[\s]*[-–—*#~=]{3,}[\s]*$").unwrap();
-    
+
     // Regex for inline formatting (Markdown-style)
     let bold_italic_re = Regex::new(r"\*\*\*(.+?)\*\*\*").unwrap();
     let bold_re = Regex::new(r"\*\*(.+?)\*\*").unwrap();
@@ -1481,27 +1626,37 @@ pub fn export_to_indesign_xml(
 
     // Chapters
     for (chapter_idx, chapter) in chapters.iter().enumerate() {
-        xml.push_str(&format!(r#"
+        xml.push_str(&format!(
+            r#"
     <chapter number="{}">
       <chapter-title aid:pstyle="ChapterTitle">{}</chapter-title>
-"#, chapter_idx + 1, xml_escape(&chapter.title)));
+"#,
+            chapter_idx + 1,
+            xml_escape(&chapter.title)
+        ));
 
         // Scenes within chapter
         for (scene_idx, scene) in chapter.scenes.iter().enumerate() {
             // Add scene break between scenes (except before first)
             if scene_idx > 0 {
-                xml.push_str(r#"
+                xml.push_str(
+                    r#"
       <scene-break aid:pstyle="SceneBreak">⁂</scene-break>
-"#);
+"#,
+                );
             }
 
-            xml.push_str(&format!(r#"
+            xml.push_str(&format!(
+                r#"
       <scene number="{}">
-"#, scene_idx + 1));
+"#,
+                scene_idx + 1
+            ));
 
             // SIMPLE APPROACH: Always split on single newlines
             // This handles all cases: \n, \r\n, and mixed content
-            let paragraphs: Vec<&str> = scene.content
+            let paragraphs: Vec<&str> = scene
+                .content
                 .split('\n')
                 .map(|p| p.trim())
                 .filter(|p| !p.is_empty())
@@ -1512,11 +1667,13 @@ pub fn export_to_indesign_xml(
 
             for para in paragraphs.iter() {
                 let trimmed = para.trim();
-                
+
                 // Check if this is a scene break marker in the text
                 if scene_break_re.is_match(trimmed) {
-                    xml.push_str(r#"        <scene-break aid:pstyle="SceneBreak">⁂</scene-break>
-"#);
+                    xml.push_str(
+                        r#"        <scene-break aid:pstyle="SceneBreak">⁂</scene-break>
+"#,
+                    );
                     is_first_para = true; // Next paragraph should be BodyTextFirst
                     prev_was_dialogue = false;
                     continue;
@@ -1524,7 +1681,7 @@ pub fn export_to_indesign_xml(
 
                 // Check if paragraph is dialogue
                 let is_dialogue = is_dialogue_paragraph(trimmed);
-                
+
                 // Determine paragraph style
                 let para_style = if is_dialogue {
                     if !prev_was_dialogue {
@@ -1537,10 +1694,10 @@ pub fn export_to_indesign_xml(
                 } else {
                     "BodyText"
                 };
-                
+
                 // Determine tag name based on content type
                 let tag_name = if is_dialogue { "dialogue" } else { "para" };
-                
+
                 // Process inline formatting
                 let formatted_content = process_inline_formatting(
                     &xml_escape(trimmed),
@@ -1549,30 +1706,32 @@ pub fn export_to_indesign_xml(
                     &italic_re,
                     &underscore_italic_re,
                 );
-                
+
                 xml.push_str(&format!(
                     r#"        <{} aid:pstyle="{}">{}</{}>
-"#, 
-                    tag_name,
-                    para_style,
-                    formatted_content,
-                    tag_name
+"#,
+                    tag_name, para_style, formatted_content, tag_name
                 ));
-                
+
                 prev_was_dialogue = is_dialogue;
                 is_first_para = false;
             }
 
-            xml.push_str(r#"      </scene>
-"#);
+            xml.push_str(
+                r#"      </scene>
+"#,
+            );
         }
 
-        xml.push_str(r#"    </chapter>
-"#);
+        xml.push_str(
+            r#"    </chapter>
+"#,
+        );
     }
 
     // Close document
-    xml.push_str(r#"
+    xml.push_str(
+        r#"
   </content>
 
   <!-- 
@@ -1601,13 +1760,14 @@ pub fn export_to_indesign_xml(
   6. Place the content using the Structure panel
   -->
 
-"#);
+"#,
+    );
 
     // Style hints with actual values from layout settings
     let font_size = settings.font_size;
     let line_height_pt = settings.font_size * settings.line_height;
     let indent = settings.first_line_indent;
-    
+
     xml.push_str(&format!(r#"  <!-- Style suggestions (pt values based on layout settings) -->
   <style-hints>
     <!-- Paragraph Styles -->
@@ -1631,7 +1791,7 @@ pub fn export_to_indesign_xml(
     // Write to file
     let mut file = std::fs::File::create(output_path).map_err(|e| e.to_string())?;
     file.write_all(xml.as_bytes()).map_err(|e| e.to_string())?;
-    
+
     log::info!("InDesign XML exported to: {:?}", output_path);
     Ok(())
 }
@@ -1639,7 +1799,7 @@ pub fn export_to_indesign_xml(
 /// Check if a paragraph is dialogue based on its content
 fn is_dialogue_paragraph(para: &str) -> bool {
     let trimmed = para.trim();
-    
+
     // Starts with quotation marks (various styles)
     trimmed.starts_with('"')           // English double quote
         || trimmed.starts_with('"')    // Smart opening quote
@@ -1663,20 +1823,28 @@ fn process_inline_formatting(
     underscore_italic_re: &regex::Regex,
 ) -> String {
     let mut result = text.to_string();
-    
+
     // Order matters: process bold+italic first, then bold, then italic
     // ***bold italic*** -> <span aid:cstyle="EmphasisStrong">bold italic</span>
-    result = bold_italic_re.replace_all(&result, r#"<span aid:cstyle="EmphasisStrong">$1</span>"#).to_string();
-    
+    result = bold_italic_re
+        .replace_all(&result, r#"<span aid:cstyle="EmphasisStrong">$1</span>"#)
+        .to_string();
+
     // **bold** -> <span aid:cstyle="Strong">bold</span>
-    result = bold_re.replace_all(&result, r#"<span aid:cstyle="Strong">$1</span>"#).to_string();
-    
+    result = bold_re
+        .replace_all(&result, r#"<span aid:cstyle="Strong">$1</span>"#)
+        .to_string();
+
     // *italic* -> <span aid:cstyle="Emphasis">italic</span>
-    result = italic_re.replace_all(&result, r#"<span aid:cstyle="Emphasis">$1</span>"#).to_string();
-    
+    result = italic_re
+        .replace_all(&result, r#"<span aid:cstyle="Emphasis">$1</span>"#)
+        .to_string();
+
     // _italic_ -> <span aid:cstyle="Emphasis">italic</span>
-    result = underscore_italic_re.replace_all(&result, r#"<span aid:cstyle="Emphasis">$1</span>"#).to_string();
-    
+    result = underscore_italic_re
+        .replace_all(&result, r#"<span aid:cstyle="Emphasis">$1</span>"#)
+        .to_string();
+
     result
 }
 
@@ -1693,7 +1861,7 @@ pub fn get_layout_settings(conn: &Connection) -> Result<LayoutSettings, String> 
             Ok(json)
         },
     );
-    
+
     match result {
         Ok(json) => serde_json::from_str(&json).map_err(|e| e.to_string()),
         Err(_) => Ok(LayoutSettings::default()),
@@ -1702,23 +1870,23 @@ pub fn get_layout_settings(conn: &Connection) -> Result<LayoutSettings, String> 
 
 pub fn save_layout_settings(conn: &Connection, settings: &LayoutSettings) -> Result<(), String> {
     let json = serde_json::to_string(settings).map_err(|e| e.to_string())?;
-    
+
     conn.execute(
         "INSERT OR REPLACE INTO layout_settings (id, settings_json, updated_at) VALUES (?1, ?2, CURRENT_TIMESTAMP)",
         rusqlite::params!["default", json],
     ).map_err(|e| e.to_string())?;
-    
+
     Ok(())
 }
 
 pub fn list_layout_presets(conn: &Connection) -> Result<Vec<LayoutPreset>, String> {
     let mut presets = get_system_presets();
-    
+
     // Add user presets
     let mut stmt = conn
         .prepare("SELECT id, name, description, settings_json FROM layout_presets ORDER BY name")
         .map_err(|e| e.to_string())?;
-    
+
     let user_presets = stmt
         .query_map([], |row| {
             let settings_json: String = row.get(3)?;
@@ -1732,20 +1900,26 @@ pub fn list_layout_presets(conn: &Connection) -> Result<Vec<LayoutPreset>, Strin
         })
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok());
-    
+
     presets.extend(user_presets);
     Ok(presets)
 }
 
-pub fn save_layout_preset(conn: &Connection, name: &str, description: &str, settings: &LayoutSettings) -> Result<LayoutPreset, String> {
+pub fn save_layout_preset(
+    conn: &Connection,
+    name: &str,
+    description: &str,
+    settings: &LayoutSettings,
+) -> Result<LayoutPreset, String> {
     let id = nanoid::nanoid!();
     let json = serde_json::to_string(settings).map_err(|e| e.to_string())?;
-    
+
     conn.execute(
         "INSERT INTO layout_presets (id, name, description, settings_json) VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![id, name, description, json],
-    ).map_err(|e| e.to_string())?;
-    
+    )
+    .map_err(|e| e.to_string())?;
+
     Ok(LayoutPreset {
         id,
         name: name.to_string(),

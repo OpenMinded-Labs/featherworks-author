@@ -1,6 +1,15 @@
-use serde::{Serialize,Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExportProject { pub id:String, pub title:String, pub author:String }
+pub struct ExportProject {
+    pub id: String,
+    pub title: String,
+    pub author: String,
+}
 
-pub fn export_docx(_project:&ExportProject,_path:&str)->Result<(),Box<dyn std::error::Error>>{Ok(())}
+pub fn export_docx(
+    _project: &ExportProject,
+    _path: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    Ok(())
+}

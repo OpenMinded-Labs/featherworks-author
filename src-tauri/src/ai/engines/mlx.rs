@@ -155,7 +155,11 @@ impl ModelLoader for MlxEngine {
         self.model_path = Some(model_path.to_path_buf());
         self.model_info = Some(info.clone());
         self.ready = true;
-        log::info!("[fontaine/mlx] Model '{}' ready at {}", info.id, model_path.display());
+        log::info!(
+            "[fontaine/mlx] Model '{}' ready at {}",
+            info.id,
+            model_path.display()
+        );
         Ok(())
     }
 
@@ -163,67 +167,168 @@ impl ModelLoader for MlxEngine {
         self.ready
     }
 
-    fn generate_tokens(&self, prompt: &str, max_tokens: usize) -> Result<Box<dyn Iterator<Item = String>>> {
+    fn generate_tokens(
+        &self,
+        prompt: &str,
+        max_tokens: usize,
+    ) -> Result<Box<dyn Iterator<Item = String>>> {
         let model_path = self
             .model_path
             .as_ref()
             .ok_or_else(|| anyhow!("MLX model not loaded"))?;
 
-        // Runs: <python> -m mlx_lm generate --model <dir> --prompt <text> ...
-        // Requires mlx-lm in the resolved Python environment (see python_executable).
-        let gemma_prompt = normalize_prompt_for_gemma(prompt);
         let token_budget = token_budget_for(max_tokens);
-        let python = python_executable();
 
-        let output = Command::new(&python)
-            .arg("-m")
-            .arg("mlx_lm")
-            .arg("generate")
-            .arg("--model")
-            .arg(model_path)
-            .arg("--prompt")
-            .arg(&gemma_prompt)
-            .arg("--max-tokens")
-            .arg(token_budget.to_string())
-            .arg("--temp")
-            .arg("0.2")
-            .output()
-            .map_err(|e| anyhow!("Failed to start mlx_lm generate: {}", e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // The most common failure is a Python without mlx-lm; say so
-            // explicitly instead of surfacing a raw ImportError.
-            if stderr.contains("No module named mlx_lm") {
-                return Err(anyhow!(
-                    "MLX-Runtime nicht gefunden: '{}' hat kein mlx-lm installiert. \
-                     Erwartet wird die Projekt-venv '.venv-mlx' \
-                     (oder setze FONTAINE_PYTHON auf einen Interpreter mit mlx-lm).",
-                    python
-                ));
+        // Preferred path: resident server. Avoids reloading 3.76 GB per request
+        // and lets the prompt cache reuse the scene prefix across questions.
+        if crate::ai::server::is_running() {
+            match generate_via_server(prompt, token_budget) {
+                Ok(text) => return Ok(Box::new(std::iter::once(text))),
+                Err(e) => {
+                    // Fall through to the subprocess path rather than failing
+                    // the user's request outright.
+                    log::warn!("[fontaine/mlx] server request failed, using subprocess: {e}");
+                }
             }
-            return Err(anyhow!(
-                "MLX inference failed (exit={}): {}",
-                output.status,
-                stderr.trim()
-            ));
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let text = extract_generation(&stdout);
-
-        if text.trim().is_empty() {
-            return Err(anyhow!(
-                "MLX returned no usable output (increase max_tokens if the model was still reasoning)"
-            ));
-        }
-
-        // Emit as a single chunk to preserve newlines/JSON structure.
-        Ok(Box::new(std::iter::once(text)))
+        generate_via_subprocess(model_path, prompt, token_budget)
+            .map(|text| Box::new(std::iter::once(text)) as Box<dyn Iterator<Item = String>>)
     }
 }
 
-/// mlx_lm wraps the generated text between `==========` separators
+/// Sends the prompt to the resident server.
+///
+/// The server applies Gemma 4's chat template itself, so the Phi-3 style
+/// markers are split back into roles instead of being rewritten into turn
+/// markers - passing pre-formatted markers here would double-encode them.
+///
+/// It also separates the reasoning block from the answer, which makes
+/// `strip_thinking` unnecessary on this path.
+fn generate_via_server(prompt: &str, token_budget: usize) -> Result<String> {
+    // Callers opt into reasoning by embedding `<|think|>` anywhere in the
+    // prompt - same contract as the subprocess path.
+    const THINK: &str = "<|think|>";
+    let thinking = prompt.contains(THINK);
+    let prompt = prompt.replace(THINK, "");
+
+    let (system, user) = split_prompt_roles(&prompt);
+
+    let mut messages: Vec<(&str, &str)> = Vec::new();
+    if !system.trim().is_empty() {
+        messages.push(("system", system.as_str()));
+    }
+    messages.push(("user", user.as_str()));
+
+    let completion = crate::ai::server::chat(&messages, token_budget, 0.2, thinking)?;
+
+    log::debug!(
+        "[fontaine/mlx] server: {} prompt tokens, {} cached, thinking={}",
+        completion.prompt_tokens,
+        completion.cached_tokens,
+        thinking
+    );
+
+    Ok(completion.content)
+}
+
+/// Splits a Phi-3 style prompt into (system, user) text.
+///
+/// Any assistant priming (text after `<|assistant|>`) is appended to the user
+/// message: the server owns the final `<|turn>model` marker, so priming cannot
+/// be injected after it.
+fn split_prompt_roles(prompt: &str) -> (String, String) {
+    let mut system = String::new();
+    let mut user = String::new();
+    let mut priming = String::new();
+
+    let mut rest = prompt;
+    if let Some(idx) = rest.find("<|system|>") {
+        let after = &rest[idx + "<|system|>".len()..];
+        let end = after.find("<|end|>").unwrap_or(after.len());
+        system = after[..end].trim().to_string();
+        rest = &after[end.min(after.len())..];
+    }
+
+    if let Some(idx) = rest.find("<|user|>") {
+        let after = &rest[idx + "<|user|>".len()..];
+        let end = after.find("<|end|>").unwrap_or(after.len());
+        user = after[..end].trim().to_string();
+        rest = &after[end.min(after.len())..];
+    }
+
+    if let Some(idx) = rest.find("<|assistant|>") {
+        priming = rest[idx + "<|assistant|>".len()..].trim().to_string();
+    }
+
+    // No markers at all -> the whole prompt is the user message.
+    if system.is_empty() && user.is_empty() {
+        user = prompt.trim().to_string();
+    }
+
+    if !priming.is_empty() {
+        user.push_str("\n\nBeginne deine Antwort mit:\n");
+        user.push_str(&priming);
+    }
+
+    (system, user)
+}
+
+/// One-shot `mlx_lm generate` in a fresh process.
+///
+/// Fallback for when the server is disabled or unreachable. Pays the full
+/// model load (~2-3 s) on every call.
+fn generate_via_subprocess(model_path: &Path, prompt: &str, token_budget: usize) -> Result<String> {
+    // Runs: <python> -m mlx_lm generate --model <dir> --prompt <text> ...
+    // Requires mlx-lm in the resolved Python environment (see python_executable).
+    let gemma_prompt = normalize_prompt_for_gemma(prompt);
+    let python = python_executable();
+
+    let output = Command::new(&python)
+        .arg("-m")
+        .arg("mlx_lm")
+        .arg("generate")
+        .arg("--model")
+        .arg(model_path)
+        .arg("--prompt")
+        .arg(&gemma_prompt)
+        .arg("--max-tokens")
+        .arg(token_budget.to_string())
+        .arg("--temp")
+        .arg("0.2")
+        .output()
+        .map_err(|e| anyhow!("Failed to start mlx_lm generate: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        // The most common failure is a Python without mlx-lm; say so
+        // explicitly instead of surfacing a raw ImportError.
+        if stderr.contains("No module named mlx_lm") {
+            return Err(anyhow!(
+                "MLX-Runtime nicht gefunden: '{}' hat kein mlx-lm installiert. \
+                 Erwartet wird die Projekt-venv '.venv-mlx' \
+                 (oder setze FONTAINE_PYTHON auf einen Interpreter mit mlx-lm).",
+                python
+            ));
+        }
+        return Err(anyhow!(
+            "MLX inference failed (exit={}): {}",
+            output.status,
+            stderr.trim()
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let text = extract_generation(&stdout);
+
+    if text.trim().is_empty() {
+        return Err(anyhow!(
+            "MLX returned no usable output (increase max_tokens if the model was still reasoning)"
+        ));
+    }
+
+    Ok(text)
+}/// mlx_lm wraps the generated text between `==========` separators
 /// and appends timing statistics. This extracts only the generated content.
 fn extract_generation(stdout: &str) -> String {
     let parts: Vec<&str> = stdout.split("==========").collect();
@@ -290,7 +395,7 @@ fn token_budget_for(requested: usize) -> usize {
 /// 1. `FONTAINE_PYTHON` environment variable (explicit override)
 /// 2. Bundled/project virtualenv at `.venv-mlx/bin/python`
 /// 3. System `python3`
-fn python_executable() -> String {
+pub fn python_executable() -> String {
     if let Ok(explicit) = std::env::var("FONTAINE_PYTHON") {
         if !explicit.trim().is_empty() {
             return explicit;
@@ -387,7 +492,8 @@ mod tests {
     /// The caller's system prompt carries task semantics and must survive.
     #[test]
     fn terse_directive_augments_rather_than_replaces_system_text() {
-        let input = "<|system|>\nDu bist ein Lektor.\n<|end|>\n<|user|>\nX\n<|end|>\n<|assistant|>\n";
+        let input =
+            "<|system|>\nDu bist ein Lektor.\n<|end|>\n<|user|>\nX\n<|end|>\n<|assistant|>\n";
         let out = normalize_prompt_for_gemma(input);
         assert!(out.contains("Du bist ein Lektor."));
         assert!(out.contains(TERSE_DIRECTIVE));
@@ -433,7 +539,8 @@ mod tests {
 
     #[test]
     fn assistant_priming_is_preserved() {
-        let input = "<|user|>\nListe Probleme.\n<|end|>\n<|assistant|>\nHier sind die Probleme:\n\n1.";
+        let input =
+            "<|user|>\nListe Probleme.\n<|end|>\n<|assistant|>\nHier sind die Probleme:\n\n1.";
         let out = normalize_prompt_for_gemma(input);
         assert!(out.contains("<|turn>model\n"));
         assert!(out.trim_end().ends_with("1."));
@@ -441,7 +548,8 @@ mod tests {
 
     #[test]
     fn extracts_generation_between_separators() {
-        let stdout = "Fetching model...\n==========\nDas ist die Antwort.\n==========\nPrompt: 12 tokens";
+        let stdout =
+            "Fetching model...\n==========\nDas ist die Antwort.\n==========\nPrompt: 12 tokens";
         assert_eq!(extract_generation(stdout), "Das ist die Antwort.");
     }
 
@@ -452,7 +560,8 @@ mod tests {
 
     #[test]
     fn strips_thinking_and_keeps_final_answer() {
-        let raw = "<|channel>thought\nThinking Process:\n1. Analyze\n<channel|>Das ist die Antwort.";
+        let raw =
+            "<|channel>thought\nThinking Process:\n1. Analyze\n<channel|>Das ist die Antwort.";
         assert_eq!(strip_thinking(raw), "Das ist die Antwort.");
     }
 
@@ -464,7 +573,10 @@ mod tests {
 
     #[test]
     fn plain_answer_passes_through() {
-        assert_eq!(strip_thinking("Einfach eine Antwort."), "Einfach eine Antwort.");
+        assert_eq!(
+            strip_thinking("Einfach eine Antwort."),
+            "Einfach eine Antwort."
+        );
     }
 
     #[test]
@@ -496,5 +608,45 @@ mod tests {
     fn token_budget_is_capped() {
         assert_eq!(token_budget_for(100_000), 16384);
         assert_eq!(token_budget_for(usize::MAX), 16384);
+    }
+
+    // --- role splitting (server path) ---
+    //
+    // The server applies the chat template itself, so prompts must be handed
+    // over as roles. Emitting turn markers here would double-encode them.
+
+    #[test]
+    fn splits_system_and_user() {
+        let input = "<|system|>\nDu bist ein Lektor.\n<|end|>\n<|user|>\nPrüfe das.\n<|end|>\n<|assistant|>\n";
+        let (system, user) = split_prompt_roles(input);
+        assert_eq!(system, "Du bist ein Lektor.");
+        assert_eq!(user, "Prüfe das.");
+    }
+
+    #[test]
+    fn plain_text_becomes_user_message() {
+        let (system, user) = split_prompt_roles("Hallo Welt");
+        assert!(system.is_empty());
+        assert_eq!(user, "Hallo Welt");
+    }
+
+    /// Priming cannot follow the model marker (the server owns it), so it is
+    /// folded into the user message instead of being dropped.
+    #[test]
+    fn assistant_priming_moves_into_user_message() {
+        let input = "<|user|>\nListe Probleme.\n<|end|>\n<|assistant|>\nHier sind die Probleme:\n\n1.";
+        let (_, user) = split_prompt_roles(input);
+        assert!(user.starts_with("Liste Probleme."));
+        assert!(user.contains("Hier sind die Probleme:"));
+    }
+
+    #[test]
+    fn role_split_never_leaks_markers() {
+        let input = "<|system|>\nS<|end|>\n<|user|>\nU<|end|>\n<|assistant|>\n";
+        let (system, user) = split_prompt_roles(input);
+        for text in [&system, &user] {
+            assert!(!text.contains("<|"), "marker leaked: {text}");
+            assert!(!text.contains("|>"), "marker leaked: {text}");
+        }
     }
 }

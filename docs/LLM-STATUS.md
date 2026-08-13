@@ -67,14 +67,127 @@ Aussagekraft begrenzt: ein Werk, n=5. Die Ausfälle waren Fantasy-Namen
 (`Zamah`, `Aszhva`, `Ri`) — Namensschemata unterscheiden sich stark zwischen den
 Büchern, daher über mehrere Werke messen.
 
+## Langkontext verifiziert (13.08.2026)
+
+Nach dem Entfernen der Kürzungen geprüft, ob das Modell lange Szenen wirklich
+nutzt. Methode: Needle-in-a-Haystack — ein erfundener Fakt (Messingkompass) wird
+an definierter Position eingefügt und abgefragt. Skript:
+`scripts/verify_long_context.py`.
+
+**Recall: 12/12** über 3k/8k/16k/32k Zeichen × Position Anfang/Mitte/Ende.
+Auch bei 32.000 Zeichen mit Nadel am Ende gefunden. Die Sliding-Attention-Sorge
+(30 von 35 Layern, Fenster 512) hat sich für diese Aufgabe **nicht** bestätigt —
+die 5 Full-Attention-Layer und `num_kv_shared_layers: 20` reichen offenbar aus.
+
+Prefill (isoliert gemessen, ohne Prozessstart und Generierung):
+
+| Zeichen | Tokens | Prefill | Peak-RAM |
+| --- | --- | --- | --- |
+| 3.000 | 1.052 | 0,6 s | 4,36 GB |
+| 16.000 | 4.833 | 2,7 s | 4,51 GB |
+| 32.000 | 9.638 | 5,7 s | 4,67 GB |
+| 60.000 | 17.741 | 11,4 s | 5,02 GB |
+
+Durchsatz fällt nur leicht (1858 → 1557 tok/s), Speicher wächst moderat
+(+0,66 GB für 17k Tokens) — dank Sliding Window. **Kein Grund für ein
+Zeichenlimit**; der Engpass ist Prefill-Zeit, nicht Qualität oder RAM.
+
+→ Damit ist der residente Server umso wichtiger: aktuell wird bei *jeder*
+Anfrage neu geprefillt.
+
+**Messfalle:** Der erste Durchlauf zeigte 4/12 und sah nach Recall-Versagen aus.
+Tatsächlich waren `--max-tokens 150` aufgebraucht, bevor der `<|channel>thought`-
+Block endete — gemessen wurde das Token-Budget, nicht das Modell. Das Skript
+markiert solche Läufe jetzt als `CUT` statt als Miss.
+
 ## Nächste Schritte
 
-### 1. Modell beim App-Start laden, resident halten
+### 1. Modell beim App-Start laden, resident halten — implementiert, ungetestet
 
-Aktuell startet **pro Anfrage** ein Python-Prozess (~2–3 s Ladezeit).
-Ziel: `mlx_lm.server` als Hintergrundprozess beim App-Start, abschaltbar über
-die AI-Settings. Ersetzt den Subprocess-Aufruf in `MlxEngine::generate_tokens`
-durch HTTP.
+`src-tauri/src/ai/server.rs`: startet `mlx_lm.server` nach erfolgreichem
+Modell-Laden in einem Hintergrund-Thread, hält den Prozess in einem `OnceLock`,
+killt ihn via `Drop` und bei `RunEvent::ExitRequested`.
+
+- Portsuche 8765–8774, `--host 127.0.0.1` explizit.
+- Fällt bei jedem Fehler auf den bisherigen Subprocess-Weg zurück.
+- Abschaltbar über `FONTAINE_NO_SERVER=1`.
+- Commands: `get_ai_server_status`, `stop_ai_server`.
+
+Verifizierte Server-Eigenschaften:
+
+| Beobachtung | Konsequenz |
+| --- | --- |
+| `reasoning` und `content` sind getrennt | `strip_thinking()` auf diesem Pfad unnötig |
+| Chat-Template wird selbst angewendet | Prompt muss als **Rollen** übergeben werden, nicht mit Turn-Markern |
+| Präfix-Cache greift: `cached=4822/4834` bei wechselnder Frage | anders als `mlx_lm.generate`, das nur ganze Prompts matcht |
+| **`model` im Request wird bei Unbekanntheit von HF geladen** | Modell-ID muss exakt der `--model`-Pfad sein, sonst Download-Versuch |
+
+Der letzte Punkt ist der gefährlichste: `"model": "gemma"` erzeugte einen
+404-Request gegen huggingface.co statt das geladene Modell zu nutzen. In einer
+Offline-App wäre das ein stiller Netzzugriff.
+
+**Gemessen (GPU frei, `tests/mlx_server_flow.rs`):**
+
+| | Zeit | Prompt-Tokens | davon gecached |
+| --- | --- | --- | --- |
+| Serverstart | 1,1 s | | |
+| 1. Anfrage (kalt) | 13,9 s | 4033 | 0 |
+| 2. Anfrage (warm) | 12,7 s | 4032 | **4020** |
+
+Der Präfix-Cache greift eindeutig — **aber er bringt nur 1,2 s**. Grund:
+
+| Phase | Durchsatz | Anteil an 13,9 s |
+| --- | --- | --- |
+| Prefill | ~1750 tok/s | 2,3 s |
+| Generierung | **37 tok/s** | ~11 s |
+
+Prefill ist **47× schneller** als Generierung. Der Cache kann nur den
+Prefill-Anteil einsparen, und der ist klein. Die Erwartung „7,2 s statt 17–58 s"
+aus früheren Notizen bezog sich auf den eingesparten *Modell-Ladevorgang*
+(~2–3 s pro Aufruf) — der entfällt tatsächlich, ist aber ebenfalls nicht der
+Hauptkostenfaktor.
+
+**Der eigentliche Hebel ist die Anzahl generierter Tokens.** Bei der trivialen
+Frage „Nenne drei Farben" erzeugte das Modell 191 Tokens: 619 Zeichen Denkblock
+für 19 Zeichen Antwort. Das heißt für die Priorisierung:
+
+1. **Denkblock unterdrücken** — erledigt, siehe unten. Grösster Hebel.
+2. **EAGLE/MTP-Draft-Head** — setzt an den 37 tok/s an.
+3. Präfix-Cache — nice to have, aber zweitrangig.
+
+Der residente Server bleibt trotzdem richtig: er spart den Modell-Ladevorgang,
+ist Voraussetzung für den Draft-Head und macht Streaming erst möglich.
+
+### 1b. Thinking standardmässig aus — erledigt
+
+`mlx_lm.server` akzeptiert `chat_template_kwargs` **pro Request**
+(`server.py:1192`), womit sich `enable_thinking` je Aufgabe steuern lässt. Das
+Chat-Template gibt `<|think|>` nur bei `enable_thinking=true` aus.
+
+Gemessen an echtem Erzähltext (`scripts/bench_thinking_flag.py`, 6k Zeichen aus
+Martyria 1 ab Position 43.000):
+
+| Aufgabe | mit Thinking | ohne Thinking | Faktor |
+| --- | --- | --- | --- |
+| Entitäten | 186,0 s → **leere Antwort** | 24,5 s, 2/2 Namen, JSON gültig | 7,6× |
+| Zusammenfassung | 40,1 s → **leere Antwort** | 5,9 s, 3 Sätze korrekt | 6,8× |
+| Stilkritik | 25,3 s, nach 159 Zeichen abgebrochen | 24,7 s, 2753 Zeichen | 1,0× |
+
+Der Denkblock verbrauchte in zwei von drei Fällen das **gesamte** Token-Budget,
+sodass gar keine Antwort ankam. Das ist kein Qualitätsvorteil, sondern
+Totalausfall — die frühere Sorge („Thinking hilft bei Extraktion") hat sich
+nicht bestätigt.
+
+Umgesetzt: `server::chat()` hat einen `thinking`-Parameter, gespeist aus dem
+bestehenden `<|think|>`-Marker. Default ist **aus**. Integrationstest
+`thinking_disabled_answers_within_budget` sichert das ab.
+
+Effekt im Integrationstest: dieselbe Anfrage **13,9 s → 4,0 s**.
+
+**Messfalle (zweimal getappt):** Der erste Durchlauf nutzte die ersten 6000
+Zeichen der Datei — das ist Titelei und Weltenbeschreibung, kein Erzähltext.
+Ergebnis: das Modell nannte den *Autor* als Figur. Bei Korpus-Messungen immer
+prüfen, ob der Textausschnitt die gemessene Eigenschaft überhaupt enthält.
 
 ### 2. Szenen-KV-Cache (TTFS)
 
@@ -94,7 +207,12 @@ Voraussetzungen, damit der Cache greift:
   keinen vollständigen Zustand. Vor dem Bauen `mlx-lm --prompt-cache-file`
   empirisch gegen einen Frisch-Prefill prüfen, nicht auf Korrektheit vertrauen.
 
-### 3. EAGLE/MTP-Draft-Head (für Speed, ~2×)
+### 3. EAGLE/MTP-Draft-Head (für Speed)
+
+Nach der Thinking-Abschaltung ist die Generierungsrate von **37 tok/s** der
+verbleibende Engpass. Erwartung nicht aus der Literatur, sondern **gemessen in
+Ailey Nitro**: 2,0× bei Greedy, **1,6× bei Temperatur > 0** (Sampling verwirft
+mehr Draft-Tokens). Fontaine fährt temp=0.2 → realistisch ~59 tok/s.
 
 Existiert als **separates** Modell: `google/gemma-4-E2B-it-assistant`,
 MLX-Konvertierung bereits geladen unter
@@ -111,6 +229,30 @@ Blocker:
 → Erfordert eigene MLX-Implementierung (4 Layer + Fusion + Verify-Loop)
 oder Wechsel auf llama.cpp/GGUF, wo die Kopplung fertig ist
 (`Architecture: gemma4-assistant`).
+
+### 3b. Python-Runtime beim Kunden — Entscheidung: Embedded Python
+
+**Fällig vor der Closed Alpha**, nicht vorher. In Development läuft Fontaine
+über `.venv-mlx` im Repo; beim Tester existiert die nicht.
+
+Geprüfte Optionen:
+
+| Weg | Bewertung |
+| --- | --- |
+| **Embedded Python** ✅ | gewählt: kalkulierbar, ändert nichts am Stack (~100 MB + mlx-lm) |
+| `mlx-rs` | **verworfen** |
+| llama.cpp/GGUF | offen als Alternative, falls Embedded scheitert |
+
+`mlx-rs` verworfen, weil (Stand 13.08.2026):
+
+- Letzter Commit vor 5 Monaten, „in active development", inoffiziell, 364 Stars.
+- Der `mlx-lm`-Teil unterstützt Mistral und Llama 3.2 1B. **Kein Gemma 4.**
+- Bindet die MLX-*Array*-Ebene. Architektur (Attention-Mischung, KV-Sharing,
+  q6-Layout, Tokenizer, Sampler) müsste selbst implementiert werden — Nachbauen,
+  nicht Anbinden, und das gekoppelt an ein ruhendes Projekt.
+
+Offen beim Umsetzen: Bundle-Größe, Code-Signing der Python-Binaries unter
+macOS (Notarisierung!), Startzeit.
 
 ### 4. Kontext-Kuratierung statt harter Limits
 

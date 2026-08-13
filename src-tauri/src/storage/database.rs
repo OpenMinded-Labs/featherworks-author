@@ -87,7 +87,7 @@ pub struct AiSettings {
 impl Default for AiSettings {
     fn default() -> Self {
         Self {
-            enabled: true,                          // AI enabled by default
+            enabled: true,                              // AI enabled by default
             model_id: "gemma-4-e2b-mlx-q6".to_string(), // Gemma 4 E2B (MLX) is the default
             temperature: 0.7,
             max_tokens: 512,
@@ -405,7 +405,7 @@ pub fn create_database(
     let ebook_id: String = nanoid::nanoid!();
     let softcover_id: String = nanoid::nanoid!();
     let hardcover_id: String = nanoid::nanoid!();
-    
+
     conn.execute(
         "INSERT INTO editions (id, name, edition_type, layout_preset_id, currency) VALUES (?1, 'E-Book', 'ebook', 'ebook', 'EUR')",
         rusqlite::params![ebook_id],
@@ -424,14 +424,14 @@ pub fn create_database(
 
 pub fn open_database(path: &str) -> Result<Connection, DatabaseOperationError> {
     log::info!("Opening database at path: {}", path);
-    
+
     let conn = Connection::open(path)?;
     log::info!("Successfully opened SQLite connection");
-    
+
     // Use query_row for PRAGMA statements that return a value, even if we ignore it.
     conn.query_row("PRAGMA journal_mode = WAL;", [], |_| Ok(()))?;
     log::info!("Set WAL mode successfully");
-    
+
     // Best-effort migrations: ensure all expected tables exist and add new columns if missing.
     // Creating tables with IF NOT EXISTS is safe for existing databases and fixes "no such table" errors.
     conn.execute_batch(
@@ -696,69 +696,91 @@ pub fn open_database(path: &str) -> Result<Connection, DatabaseOperationError> {
     let _ = conn.execute("ALTER TABLE scenes ADD COLUMN content_json TEXT", []);
     let _ = conn.execute("ALTER TABLE scenes ADD COLUMN summary TEXT", []);
     let _ = conn.execute("ALTER TABLE chapters ADD COLUMN summary TEXT", []);
-    let _ = conn.execute("ALTER TABLE entity_types ADD COLUMN schema_json TEXT DEFAULT '[]'", []);
-    
+    let _ = conn.execute(
+        "ALTER TABLE entity_types ADD COLUMN schema_json TEXT DEFAULT '[]'",
+        [],
+    );
+
     // Migration: layout_settings von key/value zu id/settings_json
     // Prüfen ob alte Struktur existiert und konvertieren
-    let needs_migration: bool = conn.query_row(
-        "SELECT COUNT(*) FROM pragma_table_info('layout_settings') WHERE name = 'key'",
-        [],
-        |row| row.get::<_, i64>(0)
-    ).unwrap_or(0) > 0;
-    
+    let needs_migration: bool = conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('layout_settings') WHERE name = 'key'",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or(0)
+        > 0;
+
     if needs_migration {
         log::info!("[DB Migration] Migrating layout_settings table from key/value to JSON schema");
         // Alte Tabelle umbenennen
-        let _ = conn.execute("ALTER TABLE layout_settings RENAME TO layout_settings_old", []);
+        let _ = conn.execute(
+            "ALTER TABLE layout_settings RENAME TO layout_settings_old",
+            [],
+        );
         // Neue Tabelle erstellen
-        let _ = conn.execute("
+        let _ = conn.execute(
+            "
             CREATE TABLE IF NOT EXISTS layout_settings (
                 id TEXT PRIMARY KEY DEFAULT 'default',
                 settings_json TEXT NOT NULL DEFAULT '{}',
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
-        ", []);
+        ",
+            [],
+        );
         // Alte Tabelle löschen
         let _ = conn.execute("DROP TABLE IF EXISTS layout_settings_old", []);
         log::info!("[DB Migration] layout_settings migration complete");
     }
-    
+
     // Sicherstellen dass die neue Struktur existiert (für neue DBs)
     let has_settings_json: bool = conn.query_row(
         "SELECT COUNT(*) FROM pragma_table_info('layout_settings') WHERE name = 'settings_json'",
         [],
         |row| row.get::<_, i64>(0)
     ).unwrap_or(0) > 0;
-    
+
     if !has_settings_json {
         // Tabelle komplett neu erstellen
         let _ = conn.execute("DROP TABLE IF EXISTS layout_settings", []);
-        conn.execute("
+        conn.execute(
+            "
             CREATE TABLE layout_settings (
                 id TEXT PRIMARY KEY DEFAULT 'default',
                 settings_json TEXT NOT NULL DEFAULT '{}',
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
-        ", []).ok();
+        ",
+            [],
+        )
+        .ok();
     }
-    
+
     Ok(conn)
 }
 
-    /// Ensure there is at least one row in `project`. If none exists, create a minimal one.
-    pub fn ensure_project_exists(conn: &Connection, default_title: &str, default_author: &str) -> Result<(), DatabaseOperationError> {
-        let count: i64 = conn.query_row("SELECT COUNT(*) FROM project", [], |row| row.get(0))?;
-        if count == 0 {
-            let project_id: String = nanoid::nanoid!();
-            conn.execute(
-                "INSERT INTO project (id, title, author) VALUES (?1, ?2, ?3)",
-                rusqlite::params![project_id, default_title, default_author],
-            )?;
-        }
-        Ok(())
+/// Ensure there is at least one row in `project`. If none exists, create a minimal one.
+pub fn ensure_project_exists(
+    conn: &Connection,
+    default_title: &str,
+    default_author: &str,
+) -> Result<(), DatabaseOperationError> {
+    let count: i64 = conn.query_row("SELECT COUNT(*) FROM project", [], |row| row.get(0))?;
+    if count == 0 {
+        let project_id: String = nanoid::nanoid!();
+        conn.execute(
+            "INSERT INTO project (id, title, author) VALUES (?1, ?2, ?3)",
+            rusqlite::params![project_id, default_title, default_author],
+        )?;
     }
+    Ok(())
+}
 pub fn get_project(conn: &Connection) -> Result<Project, DatabaseOperationError> {
-    let mut stmt = conn.prepare("SELECT id, title, author, short_name, genre, target_pages FROM project LIMIT 1")?;
+    let mut stmt = conn.prepare(
+        "SELECT id, title, author, short_name, genre, target_pages FROM project LIMIT 1",
+    )?;
     let project = stmt.query_row([], |row| {
         Ok(Project {
             id: row.get(0)?,
@@ -776,7 +798,8 @@ pub fn get_project(conn: &Connection) -> Result<Project, DatabaseOperationError>
 }
 
 pub fn list_chapters(conn: &Connection) -> Result<Vec<Chapter>, DatabaseOperationError> {
-    let mut stmt = conn.prepare("SELECT id, title, order_num FROM chapters ORDER BY order_num ASC")?;
+    let mut stmt =
+        conn.prepare("SELECT id, title, order_num FROM chapters ORDER BY order_num ASC")?;
     let chapters = stmt
         .query_map([], |row| {
             Ok(Chapter {
@@ -789,7 +812,10 @@ pub fn list_chapters(conn: &Connection) -> Result<Vec<Chapter>, DatabaseOperatio
     Ok(chapters)
 }
 
-pub fn list_scenes(conn: &Connection, chapter_id: &str) -> Result<Vec<Scene>, DatabaseOperationError> {
+pub fn list_scenes(
+    conn: &Connection,
+    chapter_id: &str,
+) -> Result<Vec<Scene>, DatabaseOperationError> {
     let mut stmt = conn.prepare("SELECT id, chapter_id, title, order_num, word_count FROM scenes WHERE chapter_id = ?1 ORDER BY order_num ASC")?;
     let scenes = stmt
         .query_map([chapter_id], |row| {
@@ -806,7 +832,11 @@ pub fn list_scenes(conn: &Connection, chapter_id: &str) -> Result<Vec<Scene>, Da
 }
 
 pub fn create_chapter(conn: &Connection, title: &str) -> Result<Chapter, DatabaseOperationError> {
-    let order_num: i32 = conn.query_row("SELECT COALESCE(MAX(order_num), 0) + 1 FROM chapters", [], |row| row.get(0))?;
+    let order_num: i32 = conn.query_row(
+        "SELECT COALESCE(MAX(order_num), 0) + 1 FROM chapters",
+        [],
+        |row| row.get(0),
+    )?;
     let id = nanoid::nanoid!();
     conn.execute(
         "INSERT INTO chapters (id, title, order_num) VALUES (?1, ?2, ?3)",
@@ -819,8 +849,16 @@ pub fn create_chapter(conn: &Connection, title: &str) -> Result<Chapter, Databas
     })
 }
 
-pub fn create_scene(conn: &Connection, chapter_id: &str, title: &str) -> Result<Scene, DatabaseOperationError> {
-    let order_num: i32 = conn.query_row("SELECT COALESCE(MAX(order_num), 0) + 1 FROM scenes WHERE chapter_id = ?1", [chapter_id], |row| row.get(0))?;
+pub fn create_scene(
+    conn: &Connection,
+    chapter_id: &str,
+    title: &str,
+) -> Result<Scene, DatabaseOperationError> {
+    let order_num: i32 = conn.query_row(
+        "SELECT COALESCE(MAX(order_num), 0) + 1 FROM scenes WHERE chapter_id = ?1",
+        [chapter_id],
+        |row| row.get(0),
+    )?;
     let id = nanoid::nanoid!();
     conn.execute(
         "INSERT INTO scenes (id, chapter_id, title, order_num, content) VALUES (?1, ?2, ?3, ?4, '')",
@@ -835,7 +873,11 @@ pub fn create_scene(conn: &Connection, chapter_id: &str, title: &str) -> Result<
     })
 }
 
-pub fn rename_chapter(conn: &Connection, chapter_id: &str, new_title: &str) -> Result<(), DatabaseOperationError> {
+pub fn rename_chapter(
+    conn: &Connection,
+    chapter_id: &str,
+    new_title: &str,
+) -> Result<(), DatabaseOperationError> {
     conn.execute(
         "UPDATE chapters SET title = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
         rusqlite::params![new_title, chapter_id],
@@ -843,7 +885,11 @@ pub fn rename_chapter(conn: &Connection, chapter_id: &str, new_title: &str) -> R
     Ok(())
 }
 
-pub fn rename_scene(conn: &Connection, scene_id: &str, new_title: &str) -> Result<(), DatabaseOperationError> {
+pub fn rename_scene(
+    conn: &Connection,
+    scene_id: &str,
+    new_title: &str,
+) -> Result<(), DatabaseOperationError> {
     conn.execute(
         "UPDATE scenes SET title = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
         rusqlite::params![new_title, scene_id],
@@ -851,16 +897,23 @@ pub fn rename_scene(conn: &Connection, scene_id: &str, new_title: &str) -> Resul
     Ok(())
 }
 
-pub fn get_scene_note(conn: &Connection, scene_id: &str) -> Result<Option<String>, DatabaseOperationError> {
+pub fn get_scene_note(
+    conn: &Connection,
+    scene_id: &str,
+) -> Result<Option<String>, DatabaseOperationError> {
     let mut stmt = conn.prepare("SELECT content FROM notes WHERE scene_id = ?1")?;
     match stmt.query_row([scene_id], |row| row.get::<_, String>(0)) {
         Ok(val) => Ok(Some(val)),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
-        Err(e) => Err(DatabaseOperationError::Sql(e))
+        Err(e) => Err(DatabaseOperationError::Sql(e)),
     }
 }
 
-pub fn upsert_scene_note(conn: &Connection, scene_id: &str, content: &str) -> Result<(), DatabaseOperationError> {
+pub fn upsert_scene_note(
+    conn: &Connection,
+    scene_id: &str,
+    content: &str,
+) -> Result<(), DatabaseOperationError> {
     conn.execute(
         "INSERT INTO notes (scene_id, content) VALUES (?1, ?2) ON CONFLICT(scene_id) DO UPDATE SET content=excluded.content, updated_at=CURRENT_TIMESTAMP",
         rusqlite::params![scene_id, content],
@@ -868,19 +921,28 @@ pub fn upsert_scene_note(conn: &Connection, scene_id: &str, content: &str) -> Re
     Ok(())
 }
 
-pub fn reorder_chapters(conn: &mut Connection, ordered_ids: &[String]) -> Result<(), DatabaseOperationError> {
+pub fn reorder_chapters(
+    conn: &mut Connection,
+    ordered_ids: &[String],
+) -> Result<(), DatabaseOperationError> {
     let tx = conn.transaction()?;
     for (idx, id) in ordered_ids.iter().enumerate() {
         let order_num = (idx as i32) + 1;
-        tx.execute("UPDATE chapters SET order_num = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
-            rusqlite::params![order_num, id])?;
+        tx.execute(
+            "UPDATE chapters SET order_num = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
+            rusqlite::params![order_num, id],
+        )?;
     }
     tx.commit()?;
     Ok(())
 }
 
 /// Reorder scenes within a chapter (or move scenes between chapters)
-pub fn reorder_scenes(conn: &mut Connection, chapter_id: &str, ordered_scene_ids: &[String]) -> Result<(), DatabaseOperationError> {
+pub fn reorder_scenes(
+    conn: &mut Connection,
+    chapter_id: &str,
+    ordered_scene_ids: &[String],
+) -> Result<(), DatabaseOperationError> {
     let tx = conn.transaction()?;
     for (idx, id) in ordered_scene_ids.iter().enumerate() {
         let order_num = (idx as i32) + 1;
@@ -908,40 +970,89 @@ pub fn load_settings(conn: &Connection) -> Result<EditorSettings, DatabaseOperat
     }
 
     Ok(EditorSettings {
-        font_family: settings_map.get("font_family").cloned().unwrap_or_else(|| "Inter".to_string()),
-        font_size: settings_map.get("font_size").and_then(|s| s.parse().ok()).unwrap_or(16),
-        line_height: settings_map.get("line_height").and_then(|s| s.parse().ok()).unwrap_or(1.6),
-        paragraph_spacing: settings_map.get("paragraph_spacing").and_then(|s| s.parse().ok()),
-        page_padding: settings_map.get("page_padding").and_then(|s| s.parse().ok()),
+        font_family: settings_map
+            .get("font_family")
+            .cloned()
+            .unwrap_or_else(|| "Inter".to_string()),
+        font_size: settings_map
+            .get("font_size")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(16),
+        line_height: settings_map
+            .get("line_height")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(1.6),
+        paragraph_spacing: settings_map
+            .get("paragraph_spacing")
+            .and_then(|s| s.parse().ok()),
+        page_padding: settings_map
+            .get("page_padding")
+            .and_then(|s| s.parse().ok()),
         editor_language: settings_map.get("editor_language").cloned(),
-        typewriter_mode: settings_map.get("typewriter_mode").and_then(|s| s.parse().ok()),
-        typewriter_sound: settings_map.get("typewriter_sound").and_then(|s| s.parse().ok()),
-        typewriter_volume: settings_map.get("typewriter_volume").and_then(|s| s.parse().ok()),
+        typewriter_mode: settings_map
+            .get("typewriter_mode")
+            .and_then(|s| s.parse().ok()),
+        typewriter_sound: settings_map
+            .get("typewriter_sound")
+            .and_then(|s| s.parse().ok()),
+        typewriter_volume: settings_map
+            .get("typewriter_volume")
+            .and_then(|s| s.parse().ok()),
     })
 }
 
-pub fn save_settings(conn: &mut Connection, settings: &EditorSettings) -> Result<(), DatabaseOperationError> {
+pub fn save_settings(
+    conn: &mut Connection,
+    settings: &EditorSettings,
+) -> Result<(), DatabaseOperationError> {
     let tx = conn.transaction()?;
-    tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('font_family', ?1)", [settings.font_family.clone()])?;
-    tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('font_size', ?1)", [settings.font_size.to_string()])?;
-    tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('line_height', ?1)", [settings.line_height.to_string()])?;
+    tx.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('font_family', ?1)",
+        [settings.font_family.clone()],
+    )?;
+    tx.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('font_size', ?1)",
+        [settings.font_size.to_string()],
+    )?;
+    tx.execute(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('line_height', ?1)",
+        [settings.line_height.to_string()],
+    )?;
     if let Some(v) = settings.paragraph_spacing {
-        tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('paragraph_spacing', ?1)", [v.to_string()])?;
+        tx.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('paragraph_spacing', ?1)",
+            [v.to_string()],
+        )?;
     }
     if let Some(v) = settings.page_padding {
-        tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('page_padding', ?1)", [v.to_string()])?;
+        tx.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('page_padding', ?1)",
+            [v.to_string()],
+        )?;
     }
     if let Some(ref v) = settings.editor_language {
-        tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('editor_language', ?1)", [v.clone()])?;
+        tx.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('editor_language', ?1)",
+            [v.clone()],
+        )?;
     }
     if let Some(v) = settings.typewriter_mode {
-        tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('typewriter_mode', ?1)", [v.to_string()])?;
+        tx.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('typewriter_mode', ?1)",
+            [v.to_string()],
+        )?;
     }
     if let Some(v) = settings.typewriter_sound {
-        tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('typewriter_sound', ?1)", [v.to_string()])?;
+        tx.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('typewriter_sound', ?1)",
+            [v.to_string()],
+        )?;
     }
     if let Some(v) = settings.typewriter_volume {
-        tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('typewriter_volume', ?1)", [v.to_string()])?;
+        tx.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('typewriter_volume', ?1)",
+            [v.to_string()],
+        )?;
     }
     tx.commit()?;
     Ok(())
@@ -950,54 +1061,106 @@ pub fn save_settings(conn: &mut Connection, settings: &EditorSettings) -> Result
 pub fn load_ai_settings(conn: &Connection) -> Result<AiSettings, DatabaseOperationError> {
     let mut stmt = conn.prepare("SELECT key, value FROM ai_settings")?;
     let iter = stmt.query_map([], |row| {
-        let key: String = row.get(0)?; let value:String = row.get(1)?; Ok((key,value))
+        let key: String = row.get(0)?;
+        let value: String = row.get(1)?;
+        Ok((key, value))
     })?;
     let mut map = std::collections::HashMap::new();
-    for r in iter { let (k,v)=r?; map.insert(k,v); }
-    
+    for r in iter {
+        let (k, v) = r?;
+        map.insert(k, v);
+    }
+
     let defaults = AiSettings::default();
     Ok(AiSettings {
-        enabled: map.get("enabled").and_then(|s| s.parse().ok()).unwrap_or(defaults.enabled),
+        enabled: map
+            .get("enabled")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(defaults.enabled),
         model_id: {
-            let raw = map.get("model_id").cloned().unwrap_or(defaults.model_id.clone());
+            let raw = map
+                .get("model_id")
+                .cloned()
+                .unwrap_or(defaults.model_id.clone());
             // Migrate legacy model IDs to the new MLX default
             match raw.as_str() {
-                "phi-3-mini" | "phi-3-mini-128k" | "ministral-8b" => "gemma-4-e2b-mlx-q6".to_string(),
+                "phi-3-mini" | "phi-3-mini-128k" | "ministral-8b" => {
+                    "gemma-4-e2b-mlx-q6".to_string()
+                }
                 _ => raw,
             }
         },
-        temperature: map.get("temperature").and_then(|s| s.parse().ok()).unwrap_or(defaults.temperature),
-        max_tokens: map.get("max_tokens").and_then(|s| s.parse().ok()).unwrap_or(defaults.max_tokens),
-        auto_load: map.get("auto_load").and_then(|s| s.parse().ok()).unwrap_or(defaults.auto_load),
+        temperature: map
+            .get("temperature")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(defaults.temperature),
+        max_tokens: map
+            .get("max_tokens")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(defaults.max_tokens),
+        auto_load: map
+            .get("auto_load")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(defaults.auto_load),
     })
 }
 
-pub fn save_ai_settings(conn: &mut Connection, s: &AiSettings) -> Result<(), DatabaseOperationError> {
+pub fn save_ai_settings(
+    conn: &mut Connection,
+    s: &AiSettings,
+) -> Result<(), DatabaseOperationError> {
     let tx = conn.transaction()?;
-    tx.execute("INSERT OR REPLACE INTO ai_settings (key,value) VALUES ('enabled', ?1)", [s.enabled.to_string()])?;
-    tx.execute("INSERT OR REPLACE INTO ai_settings (key,value) VALUES ('model_id', ?1)", [&s.model_id])?;
-    tx.execute("INSERT OR REPLACE INTO ai_settings (key,value) VALUES ('temperature', ?1)", [s.temperature.to_string()])?;
-    tx.execute("INSERT OR REPLACE INTO ai_settings (key,value) VALUES ('max_tokens', ?1)", [s.max_tokens.to_string()])?;
-    tx.execute("INSERT OR REPLACE INTO ai_settings (key,value) VALUES ('auto_load', ?1)", [s.auto_load.to_string()])?;
-    tx.commit()?; 
+    tx.execute(
+        "INSERT OR REPLACE INTO ai_settings (key,value) VALUES ('enabled', ?1)",
+        [s.enabled.to_string()],
+    )?;
+    tx.execute(
+        "INSERT OR REPLACE INTO ai_settings (key,value) VALUES ('model_id', ?1)",
+        [&s.model_id],
+    )?;
+    tx.execute(
+        "INSERT OR REPLACE INTO ai_settings (key,value) VALUES ('temperature', ?1)",
+        [s.temperature.to_string()],
+    )?;
+    tx.execute(
+        "INSERT OR REPLACE INTO ai_settings (key,value) VALUES ('max_tokens', ?1)",
+        [s.max_tokens.to_string()],
+    )?;
+    tx.execute(
+        "INSERT OR REPLACE INTO ai_settings (key,value) VALUES ('auto_load', ?1)",
+        [s.auto_load.to_string()],
+    )?;
+    tx.commit()?;
     Ok(())
 }
 
-pub fn get_scene_content(conn: &Connection, id: &str) -> Result<(String, i32), DatabaseOperationError> {
+pub fn get_scene_content(
+    conn: &Connection,
+    id: &str,
+) -> Result<(String, i32), DatabaseOperationError> {
     let mut stmt = conn.prepare("SELECT content, word_count FROM scenes WHERE id = ?1")?;
-    stmt.query_row([id], |row| {
-        Ok((row.get(0)?, row.get(1)?))
-    }).map_err(|e| e.into())
+    stmt.query_row([id], |row| Ok((row.get(0)?, row.get(1)?)))
+        .map_err(|e| e.into())
 }
 
-pub fn get_scene_content_with_json(conn: &Connection, id: &str) -> Result<(Option<String>, String, i32), DatabaseOperationError> {
-    let mut stmt = conn.prepare("SELECT content_json, content, word_count FROM scenes WHERE id = ?1")?;
+pub fn get_scene_content_with_json(
+    conn: &Connection,
+    id: &str,
+) -> Result<(Option<String>, String, i32), DatabaseOperationError> {
+    let mut stmt =
+        conn.prepare("SELECT content_json, content, word_count FROM scenes WHERE id = ?1")?;
     stmt.query_row([id], |row| {
         Ok((row.get::<_, Option<String>>(0)?, row.get(1)?, row.get(2)?))
-    }).map_err(|e| e.into())
+    })
+    .map_err(|e| e.into())
 }
 
-pub fn update_scene_content(conn: &Connection, id: &str, content: &str, word_count: i32) -> Result<(), DatabaseOperationError> {
+pub fn update_scene_content(
+    conn: &Connection,
+    id: &str,
+    content: &str,
+    word_count: i32,
+) -> Result<(), DatabaseOperationError> {
     conn.execute(
         "UPDATE scenes SET content = ?1, word_count = ?2, updated_at = CURRENT_TIMESTAMP WHERE id = ?3",
         rusqlite::params![content, word_count, id],
@@ -1023,14 +1186,20 @@ pub fn update_scene_content_json(
 // Summary Functions - Auto-generated scene/chapter summaries for AI context
 // ============================================================================
 
-pub fn get_scene_summary(conn: &Connection, scene_id: &str) -> Result<Option<String>, DatabaseOperationError> {
+pub fn get_scene_summary(
+    conn: &Connection,
+    scene_id: &str,
+) -> Result<Option<String>, DatabaseOperationError> {
     let mut stmt = conn.prepare("SELECT summary FROM scenes WHERE id = ?1")?;
-    stmt.query_row([scene_id], |row| {
-        row.get::<_, Option<String>>(0)
-    }).map_err(|e| e.into())
+    stmt.query_row([scene_id], |row| row.get::<_, Option<String>>(0))
+        .map_err(|e| e.into())
 }
 
-pub fn update_scene_summary(conn: &Connection, scene_id: &str, summary: &str) -> Result<(), DatabaseOperationError> {
+pub fn update_scene_summary(
+    conn: &Connection,
+    scene_id: &str,
+    summary: &str,
+) -> Result<(), DatabaseOperationError> {
     conn.execute(
         "UPDATE scenes SET summary = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
         rusqlite::params![summary, scene_id],
@@ -1038,14 +1207,20 @@ pub fn update_scene_summary(conn: &Connection, scene_id: &str, summary: &str) ->
     Ok(())
 }
 
-pub fn get_chapter_summary(conn: &Connection, chapter_id: &str) -> Result<Option<String>, DatabaseOperationError> {
+pub fn get_chapter_summary(
+    conn: &Connection,
+    chapter_id: &str,
+) -> Result<Option<String>, DatabaseOperationError> {
     let mut stmt = conn.prepare("SELECT summary FROM chapters WHERE id = ?1")?;
-    stmt.query_row([chapter_id], |row| {
-        row.get::<_, Option<String>>(0)
-    }).map_err(|e| e.into())
+    stmt.query_row([chapter_id], |row| row.get::<_, Option<String>>(0))
+        .map_err(|e| e.into())
 }
 
-pub fn update_chapter_summary(conn: &Connection, chapter_id: &str, summary: &str) -> Result<(), DatabaseOperationError> {
+pub fn update_chapter_summary(
+    conn: &Connection,
+    chapter_id: &str,
+    summary: &str,
+) -> Result<(), DatabaseOperationError> {
     conn.execute(
         "UPDATE chapters SET summary = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
         rusqlite::params![summary, chapter_id],
@@ -1054,8 +1229,11 @@ pub fn update_chapter_summary(conn: &Connection, chapter_id: &str, summary: &str
 }
 
 /// Get all chapter summaries for building AI context
-pub fn get_all_chapter_summaries(conn: &Connection) -> Result<Vec<(String, String, Option<String>)>, DatabaseOperationError> {
-    let mut stmt = conn.prepare("SELECT id, title, summary FROM chapters ORDER BY order_num ASC")?;
+pub fn get_all_chapter_summaries(
+    conn: &Connection,
+) -> Result<Vec<(String, String, Option<String>)>, DatabaseOperationError> {
+    let mut stmt =
+        conn.prepare("SELECT id, title, summary FROM chapters ORDER BY order_num ASC")?;
     let rows = stmt.query_map([], |row| {
         Ok((
             row.get::<_, String>(0)?,
@@ -1071,8 +1249,13 @@ pub fn get_all_chapter_summaries(conn: &Connection) -> Result<Vec<(String, Strin
 }
 
 /// Get all scene summaries for a specific chapter
-pub fn get_chapter_scene_summaries(conn: &Connection, chapter_id: &str) -> Result<Vec<(String, String, Option<String>)>, DatabaseOperationError> {
-    let mut stmt = conn.prepare("SELECT id, title, summary FROM scenes WHERE chapter_id = ?1 ORDER BY order_num ASC")?;
+pub fn get_chapter_scene_summaries(
+    conn: &Connection,
+    chapter_id: &str,
+) -> Result<Vec<(String, String, Option<String>)>, DatabaseOperationError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title, summary FROM scenes WHERE chapter_id = ?1 ORDER BY order_num ASC",
+    )?;
     let rows = stmt.query_map([chapter_id], |row| {
         Ok((
             row.get::<_, String>(0)?,
@@ -1116,7 +1299,7 @@ pub struct EntityType {
     pub is_system: bool,
     pub order_num: i32,
     #[serde(default)]
-    pub schema_json: String,    // JSON schema for custom fields: [{"name": "age", "type": "number", "label": "Alter"}, ...]
+    pub schema_json: String, // JSON schema for custom fields: [{"name": "age", "type": "number", "label": "Alter"}, ...]
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -1124,11 +1307,11 @@ pub struct Entity {
     pub id: String,
     pub type_id: String,
     pub name: String,
-    pub aliases: String,        // Comma-separated alternative names for matching
+    pub aliases: String, // Comma-separated alternative names for matching
     pub description: String,
     pub notes: String,
-    pub color: Option<String>,  // If None, use EntityType default_color
-    pub metadata_json: String,  // Flexible JSON for type-specific fields
+    pub color: Option<String>, // If None, use EntityType default_color
+    pub metadata_json: String, // Flexible JSON for type-specific fields
     pub created_at: String,
     pub updated_at: String,
 }
@@ -1138,10 +1321,10 @@ pub struct Entity {
 pub struct EntityImage {
     pub id: String,
     pub entity_id: String,
-    pub name: String,           // User-defined name (e.g., "Portrait", "Full Body", "Map")
-    pub file_name: String,      // Original filename
-    pub mime_type: String,      // e.g., "image/png", "image/jpeg"
-    #[serde(skip_serializing)]  // Don't send blob in list responses
+    pub name: String, // User-defined name (e.g., "Portrait", "Full Body", "Map")
+    pub file_name: String, // Original filename
+    pub mime_type: String, // e.g., "image/png", "image/jpeg"
+    #[serde(skip_serializing)] // Don't send blob in list responses
     pub data: Vec<u8>,
     pub order_num: i32,
     pub created_at: String,
@@ -1165,18 +1348,20 @@ pub fn list_entity_types(conn: &Connection) -> Result<Vec<EntityType>, DatabaseO
         "SELECT id, name, name_plural, icon, default_color, is_system, order_num, COALESCE(schema_json, '[]')
          FROM entity_types ORDER BY order_num ASC"
     )?;
-    let types = stmt.query_map([], |row| {
-        Ok(EntityType {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            name_plural: row.get(2)?,
-            icon: row.get(3)?,
-            default_color: row.get(4)?,
-            is_system: row.get::<_, i32>(5)? == 1,
-            order_num: row.get(6)?,
-            schema_json: row.get(7)?,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let types = stmt
+        .query_map([], |row| {
+            Ok(EntityType {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                name_plural: row.get(2)?,
+                icon: row.get(3)?,
+                default_color: row.get(4)?,
+                is_system: row.get::<_, i32>(5)? == 1,
+                order_num: row.get(6)?,
+                schema_json: row.get(7)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(types)
 }
 
@@ -1190,7 +1375,9 @@ pub fn create_entity_type(
 ) -> Result<EntityType, DatabaseOperationError> {
     let id = nanoid::nanoid!();
     let order_num: i32 = conn.query_row(
-        "SELECT COALESCE(MAX(order_num), 0) + 1 FROM entity_types", [], |row| row.get(0)
+        "SELECT COALESCE(MAX(order_num), 0) + 1 FROM entity_types",
+        [],
+        |row| row.get(0),
     )?;
     conn.execute(
         "INSERT INTO entity_types (id, name, name_plural, icon, default_color, is_system, order_num, schema_json) 
@@ -1210,7 +1397,11 @@ pub fn create_entity_type(
 }
 
 /// Update entity type schema (custom fields definition)
-pub fn update_entity_type_schema(conn: &Connection, type_id: &str, schema_json: &str) -> Result<(), DatabaseOperationError> {
+pub fn update_entity_type_schema(
+    conn: &Connection,
+    type_id: &str,
+    schema_json: &str,
+) -> Result<(), DatabaseOperationError> {
     conn.execute(
         "UPDATE entity_types SET schema_json = ?1 WHERE id = ?2",
         rusqlite::params![schema_json, type_id],
@@ -1240,12 +1431,18 @@ pub fn delete_entity_type(conn: &Connection, type_id: &str) -> Result<(), Databa
     // First delete all entities of this type
     conn.execute("DELETE FROM entities WHERE type_id = ?1", [type_id])?;
     // Then delete the type itself (only if not system)
-    conn.execute("DELETE FROM entity_types WHERE id = ?1 AND is_system = 0", [type_id])?;
+    conn.execute(
+        "DELETE FROM entity_types WHERE id = ?1 AND is_system = 0",
+        [type_id],
+    )?;
     Ok(())
 }
 
 /// List all entities, optionally filtered by type
-pub fn list_entities(conn: &Connection, type_id: Option<&str>) -> Result<Vec<Entity>, DatabaseOperationError> {
+pub fn list_entities(
+    conn: &Connection,
+    type_id: Option<&str>,
+) -> Result<Vec<Entity>, DatabaseOperationError> {
     let sql = match type_id {
         Some(_) => "SELECT id, type_id, name, aliases, description, notes, color, metadata_json, created_at, updated_at 
                     FROM entities WHERE type_id = ?1 ORDER BY name ASC",
@@ -1253,13 +1450,14 @@ pub fn list_entities(conn: &Connection, type_id: Option<&str>) -> Result<Vec<Ent
                  FROM entities ORDER BY type_id, name ASC",
     };
     let mut stmt = conn.prepare(sql)?;
-    
+
     let entities = if let Some(tid) = type_id {
         stmt.query_map([tid], map_entity_row)?
     } else {
         stmt.query_map([], map_entity_row)?
-    }.collect::<Result<Vec<_>, _>>()?;
-    
+    }
+    .collect::<Result<Vec<_>, _>>()?;
+
     Ok(entities)
 }
 
@@ -1309,7 +1507,8 @@ pub fn create_entity(
         rusqlite::params![id, type_id, name, aliases, description, notes, color, metadata_json],
     )?;
     // Fetch and return the created entity
-    get_entity(conn, &id)?.ok_or_else(|| DatabaseOperationError::Sql(rusqlite::Error::QueryReturnedNoRows))
+    get_entity(conn, &id)?
+        .ok_or_else(|| DatabaseOperationError::Sql(rusqlite::Error::QueryReturnedNoRows))
 }
 
 /// Upsert entity - Update if exists (by name+type), create if new
@@ -1350,7 +1549,7 @@ pub fn upsert_entity(
             Err(e) => return Err(DatabaseOperationError::Sql(e)),
         }
     };
-    
+
     if let Some(existing_entity) = existing {
         // Entity exists - merge new info with existing
         // Only update fields if new data is more substantial
@@ -1364,37 +1563,48 @@ pub fn upsert_entity(
                 .collect();
             for a in aliases.split(',') {
                 let val = a.trim();
-                if val.is_empty() { continue; }
+                if val.is_empty() {
+                    continue;
+                }
                 if !set.iter().any(|e| e.eq_ignore_ascii_case(val)) {
                     set.push(val.to_string());
                 }
             }
             set.join(", ")
         };
-        
+
         let merged_description = if description.len() > existing_entity.description.len() {
             description.to_string()
         } else {
             existing_entity.description.clone()
         };
-        
+
         let merged_notes = if notes.len() > existing_entity.notes.len() {
             notes.to_string()
         } else {
             existing_entity.notes.clone()
         };
-        
+
         conn.execute(
             "UPDATE entities SET aliases = ?1, description = ?2, notes = ?3, updated_at = CURRENT_TIMESTAMP WHERE id = ?4",
             rusqlite::params![merged_aliases, merged_description, merged_notes, existing_entity.id],
         )?;
-        
+
         let updated = get_entity(conn, &existing_entity.id)?
             .ok_or_else(|| DatabaseOperationError::Sql(rusqlite::Error::QueryReturnedNoRows))?;
         Ok((updated, true)) // was updated
     } else {
         // Create new entity
-        let entity = create_entity(conn, type_id, name, aliases, description, notes, color, metadata_json)?;
+        let entity = create_entity(
+            conn,
+            type_id,
+            name,
+            aliases,
+            description,
+            notes,
+            color,
+            metadata_json,
+        )?;
         Ok((entity, false)) // was created
     }
 }
@@ -1429,67 +1639,77 @@ pub fn delete_entity(conn: &Connection, id: &str) -> Result<(), DatabaseOperatio
 // ============================================================================
 
 /// List all images for an entity (metadata only, no blob data)
-pub fn list_entity_images(conn: &Connection, entity_id: &str) -> Result<Vec<EntityImageMeta>, DatabaseOperationError> {
+pub fn list_entity_images(
+    conn: &Connection,
+    entity_id: &str,
+) -> Result<Vec<EntityImageMeta>, DatabaseOperationError> {
     let mut stmt = conn.prepare(
         "SELECT id, entity_id, name, file_name, mime_type, order_num, created_at 
-         FROM entity_images WHERE entity_id = ?1 ORDER BY order_num ASC"
+         FROM entity_images WHERE entity_id = ?1 ORDER BY order_num ASC",
     )?;
-    let images = stmt.query_map([entity_id], |row| {
-        Ok(EntityImageMeta {
-            id: row.get(0)?,
-            entity_id: row.get(1)?,
-            name: row.get(2)?,
-            file_name: row.get(3)?,
-            mime_type: row.get(4)?,
-            order_num: row.get(5)?,
-            created_at: row.get(6)?,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let images = stmt
+        .query_map([entity_id], |row| {
+            Ok(EntityImageMeta {
+                id: row.get(0)?,
+                entity_id: row.get(1)?,
+                name: row.get(2)?,
+                file_name: row.get(3)?,
+                mime_type: row.get(4)?,
+                order_num: row.get(5)?,
+                created_at: row.get(6)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(images)
 }
 
 /// Get a single image with its data (for display)
-pub fn get_entity_image(conn: &Connection, image_id: &str) -> Result<EntityImage, DatabaseOperationError> {
+pub fn get_entity_image(
+    conn: &Connection,
+    image_id: &str,
+) -> Result<EntityImage, DatabaseOperationError> {
     let image = conn.query_row(
         "SELECT id, entity_id, name, file_name, mime_type, data, order_num, created_at 
          FROM entity_images WHERE id = ?1",
         [image_id],
-        |row| Ok(EntityImage {
-            id: row.get(0)?,
-            entity_id: row.get(1)?,
-            name: row.get(2)?,
-            file_name: row.get(3)?,
-            mime_type: row.get(4)?,
-            data: row.get(5)?,
-            order_num: row.get(6)?,
-            created_at: row.get(7)?,
-        })
+        |row| {
+            Ok(EntityImage {
+                id: row.get(0)?,
+                entity_id: row.get(1)?,
+                name: row.get(2)?,
+                file_name: row.get(3)?,
+                mime_type: row.get(4)?,
+                data: row.get(5)?,
+                order_num: row.get(6)?,
+                created_at: row.get(7)?,
+            })
+        },
     )?;
     Ok(image)
 }
 
 /// Add an image to an entity
 pub fn add_entity_image(
-    conn: &Connection, 
-    entity_id: &str, 
-    name: &str, 
-    file_name: &str, 
-    mime_type: &str, 
-    data: &[u8]
+    conn: &Connection,
+    entity_id: &str,
+    name: &str,
+    file_name: &str,
+    mime_type: &str,
+    data: &[u8],
 ) -> Result<EntityImageMeta, DatabaseOperationError> {
     let id = nanoid::nanoid!();
     let order_num: i32 = conn.query_row(
         "SELECT COALESCE(MAX(order_num), 0) + 1 FROM entity_images WHERE entity_id = ?1",
         [entity_id],
-        |row| row.get(0)
+        |row| row.get(0),
     )?;
-    
+
     conn.execute(
         "INSERT INTO entity_images (id, entity_id, name, file_name, mime_type, data, order_num) 
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![id, entity_id, name, file_name, mime_type, data, order_num],
     )?;
-    
+
     Ok(EntityImageMeta {
         id,
         entity_id: entity_id.to_string(),
@@ -1502,7 +1722,11 @@ pub fn add_entity_image(
 }
 
 /// Update an image's name
-pub fn update_entity_image_name(conn: &Connection, image_id: &str, name: &str) -> Result<(), DatabaseOperationError> {
+pub fn update_entity_image_name(
+    conn: &Connection,
+    image_id: &str,
+    name: &str,
+) -> Result<(), DatabaseOperationError> {
     conn.execute(
         "UPDATE entity_images SET name = ?1 WHERE id = ?2",
         rusqlite::params![name, image_id],
@@ -1511,39 +1735,49 @@ pub fn update_entity_image_name(conn: &Connection, image_id: &str, name: &str) -
 }
 
 /// Delete an image
-pub fn delete_entity_image(conn: &Connection, image_id: &str) -> Result<(), DatabaseOperationError> {
+pub fn delete_entity_image(
+    conn: &Connection,
+    image_id: &str,
+) -> Result<(), DatabaseOperationError> {
     conn.execute("DELETE FROM entity_images WHERE id = ?1", [image_id])?;
     Ok(())
 }
 
 /// Count images for an entity (to enforce max limit)
-pub fn count_entity_images(conn: &Connection, entity_id: &str) -> Result<i32, DatabaseOperationError> {
+pub fn count_entity_images(
+    conn: &Connection,
+    entity_id: &str,
+) -> Result<i32, DatabaseOperationError> {
     let count: i32 = conn.query_row(
         "SELECT COUNT(*) FROM entity_images WHERE entity_id = ?1",
         [entity_id],
-        |row| row.get(0)
+        |row| row.get(0),
     )?;
     Ok(count)
 }
 
 /// Get all entity names and aliases for editor highlighting
 /// Returns: Vec<(entity_id, type_id, name, aliases, color)>
-pub fn get_entity_names_for_highlighting(conn: &Connection) -> Result<Vec<(String, String, String, String, String)>, DatabaseOperationError> {
+pub fn get_entity_names_for_highlighting(
+    conn: &Connection,
+) -> Result<Vec<(String, String, String, String, String)>, DatabaseOperationError> {
     let mut stmt = conn.prepare(
         "SELECT e.id, e.type_id, e.name, e.aliases, COALESCE(e.color, t.default_color) as color
          FROM entities e
          JOIN entity_types t ON e.type_id = t.id
-         ORDER BY LENGTH(e.name) DESC"  // Longer names first for correct matching
+         ORDER BY LENGTH(e.name) DESC", // Longer names first for correct matching
     )?;
-    let results = stmt.query_map([], |row| {
-        Ok((
-            row.get::<_, String>(0)?,
-            row.get::<_, String>(1)?,
-            row.get::<_, String>(2)?,
-            row.get::<_, String>(3)?,
-            row.get::<_, String>(4)?,
-        ))
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let results = stmt
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+            ))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(results)
 }
 
@@ -1561,17 +1795,19 @@ pub struct RagDocument {
 /// List all RAG documents for current project
 pub fn list_rag_documents(conn: &Connection) -> Result<Vec<RagDocument>, DatabaseOperationError> {
     let mut stmt = conn.prepare(
-        "SELECT id, name, file_type, file_size, added_at FROM rag_documents ORDER BY added_at DESC"
+        "SELECT id, name, file_type, file_size, added_at FROM rag_documents ORDER BY added_at DESC",
     )?;
-    let docs = stmt.query_map([], |row| {
-        Ok(RagDocument {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            file_type: row.get(2)?,
-            file_size: row.get(3)?,
-            added_at: row.get(4)?,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let docs = stmt
+        .query_map([], |row| {
+            Ok(RagDocument {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                file_type: row.get(2)?,
+                file_size: row.get(3)?,
+                added_at: row.get(4)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(docs)
 }
 
@@ -1592,13 +1828,15 @@ pub fn add_rag_document(
     let doc = conn.query_row(
         "SELECT id, name, file_type, file_size, added_at FROM rag_documents WHERE id = ?1",
         [&id],
-        |row| Ok(RagDocument {
-            id: row.get(0)?,
-            name: row.get(1)?,
-            file_type: row.get(2)?,
-            file_size: row.get(3)?,
-            added_at: row.get(4)?,
-        })
+        |row| {
+            Ok(RagDocument {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                file_type: row.get(2)?,
+                file_size: row.get(3)?,
+                added_at: row.get(4)?,
+            })
+        },
     )?;
     Ok(doc)
 }
@@ -1610,11 +1848,15 @@ pub fn remove_rag_document(conn: &Connection, id: &str) -> Result<(), DatabaseOp
 }
 
 /// Get all RAG document content for context building
-pub fn get_all_rag_content(conn: &Connection) -> Result<Vec<(String, String)>, DatabaseOperationError> {
+pub fn get_all_rag_content(
+    conn: &Connection,
+) -> Result<Vec<(String, String)>, DatabaseOperationError> {
     let mut stmt = conn.prepare("SELECT name, content FROM rag_documents")?;
-    let results = stmt.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })?.collect::<Result<Vec<_>, _>>()?;
+    let results = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
     Ok(results)
 }
 
@@ -1628,7 +1870,7 @@ pub fn save_chunks(conn: &Connection, chunks: &[TextChunk]) -> Result<(), Databa
         "INSERT OR REPLACE INTO rag_chunks (id, source_id, source_type, chunk_index, total_chunks, content)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
     )?;
-    
+
     for chunk in chunks {
         stmt.execute(rusqlite::params![
             chunk.id,
@@ -1643,7 +1885,10 @@ pub fn save_chunks(conn: &Connection, chunks: &[TextChunk]) -> Result<(), Databa
 }
 
 /// Delete chunks by source ID
-pub fn delete_chunks_by_source(conn: &Connection, source_id: &str) -> Result<(), DatabaseOperationError> {
+pub fn delete_chunks_by_source(
+    conn: &Connection,
+    source_id: &str,
+) -> Result<(), DatabaseOperationError> {
     conn.execute("DELETE FROM rag_chunks WHERE source_id = ?1", [source_id])?;
     Ok(())
 }
@@ -1652,37 +1897,44 @@ pub fn delete_chunks_by_source(conn: &Connection, source_id: &str) -> Result<(),
 pub fn get_all_chunks(conn: &Connection) -> Result<Vec<TextChunk>, DatabaseOperationError> {
     let mut stmt = conn.prepare(
         "SELECT id, source_id, source_type, chunk_index, total_chunks, content 
-         FROM rag_chunks ORDER BY source_type, source_id, chunk_index"
+         FROM rag_chunks ORDER BY source_type, source_id, chunk_index",
     )?;
-    
-    let chunks = stmt.query_map([], |row| {
-        Ok(TextChunk {
-            id: row.get(0)?,
-            source_id: row.get(1)?,
-            source_type: row.get(2)?,
-            chunk_index: row.get(3)?,
-            total_chunks: row.get(4)?,
-            content: row.get(5)?,
-            start_offset: 0,
-            end_offset: 0,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
-    
+
+    let chunks = stmt
+        .query_map([], |row| {
+            Ok(TextChunk {
+                id: row.get(0)?,
+                source_id: row.get(1)?,
+                source_type: row.get(2)?,
+                chunk_index: row.get(3)?,
+                total_chunks: row.get(4)?,
+                content: row.get(5)?,
+                start_offset: 0,
+                end_offset: 0,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
     Ok(chunks)
 }
 
 /// Search chunks by keyword (fallback for semantic search)
-pub fn search_chunks_keyword(conn: &Connection, keywords: &[String], limit: usize) -> Result<Vec<TextChunk>, DatabaseOperationError> {
+pub fn search_chunks_keyword(
+    conn: &Connection,
+    keywords: &[String],
+    limit: usize,
+) -> Result<Vec<TextChunk>, DatabaseOperationError> {
     if keywords.is_empty() {
         return Ok(Vec::new());
     }
-    
+
     // Build LIKE query for each keyword
-    let conditions: Vec<String> = keywords.iter()
+    let conditions: Vec<String> = keywords
+        .iter()
         .map(|_| "content LIKE ?".to_string())
         .collect();
     let where_clause = conditions.join(" OR ");
-    
+
     let query = format!(
         "SELECT id, source_id, source_type, chunk_index, total_chunks, content 
          FROM rag_chunks 
@@ -1690,37 +1942,36 @@ pub fn search_chunks_keyword(conn: &Connection, keywords: &[String], limit: usiz
          LIMIT ?",
         where_clause
     );
-    
+
     let mut stmt = conn.prepare(&query)?;
-    
+
     // Bind keyword parameters as boxed ToSql
-    let keyword_params: Vec<String> = keywords.iter()
-        .map(|kw| format!("%{}%", kw))
-        .collect();
-    
+    let keyword_params: Vec<String> = keywords.iter().map(|kw| format!("%{}%", kw)).collect();
+
     // Create a dynamic params vector
-    let mut params: Vec<Box<dyn rusqlite::ToSql>> = keyword_params.iter()
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = keyword_params
+        .iter()
         .map(|s| Box::new(s.clone()) as Box<dyn rusqlite::ToSql>)
         .collect();
     params.push(Box::new(limit as i64));
-    
-    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter()
-        .map(|b| b.as_ref())
-        .collect();
-    
-    let chunks = stmt.query_map(param_refs.as_slice(), |row| {
-        Ok(TextChunk {
-            id: row.get(0)?,
-            source_id: row.get(1)?,
-            source_type: row.get(2)?,
-            chunk_index: row.get(3)?,
-            total_chunks: row.get(4)?,
-            content: row.get(5)?,
-            start_offset: 0,
-            end_offset: 0,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
-    
+
+    let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|b| b.as_ref()).collect();
+
+    let chunks = stmt
+        .query_map(param_refs.as_slice(), |row| {
+            Ok(TextChunk {
+                id: row.get(0)?,
+                source_id: row.get(1)?,
+                source_type: row.get(2)?,
+                chunk_index: row.get(3)?,
+                total_chunks: row.get(4)?,
+                content: row.get(5)?,
+                start_offset: 0,
+                end_offset: 0,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
     Ok(chunks)
 }
 
@@ -1792,26 +2043,28 @@ pub fn load_lektorat_annotations(
          WHERE scene_id = ?1 AND status = 'active'
          ORDER BY line, start_col"
     )?;
-    
-    let annotations = stmt.query_map([scene_id], |row| {
-        Ok(LektoratAnnotation {
-            id: row.get(0)?,
-            scene_id: row.get(1)?,
-            line: row.get(2)?,
-            start_col: row.get(3)?,
-            end_col: row.get(4)?,
-            annotation_type: row.get(5)?,
-            severity: row.get(6)?,
-            message: row.get(7)?,
-            suggestion: row.get(8)?,
-            context: row.get(9)?,
-            text_hash: row.get(10)?,
-            status: row.get(11)?,
-            created_at: row.get(12)?,
-            dismissed_at: row.get(13)?,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
-    
+
+    let annotations = stmt
+        .query_map([scene_id], |row| {
+            Ok(LektoratAnnotation {
+                id: row.get(0)?,
+                scene_id: row.get(1)?,
+                line: row.get(2)?,
+                start_col: row.get(3)?,
+                end_col: row.get(4)?,
+                annotation_type: row.get(5)?,
+                severity: row.get(6)?,
+                message: row.get(7)?,
+                suggestion: row.get(8)?,
+                context: row.get(9)?,
+                text_hash: row.get(10)?,
+                status: row.get(11)?,
+                created_at: row.get(12)?,
+                dismissed_at: row.get(13)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
     Ok(annotations)
 }
 
@@ -1826,26 +2079,28 @@ pub fn load_all_lektorat_annotations(
          WHERE scene_id = ?1
          ORDER BY line, start_col"
     )?;
-    
-    let annotations = stmt.query_map([scene_id], |row| {
-        Ok(LektoratAnnotation {
-            id: row.get(0)?,
-            scene_id: row.get(1)?,
-            line: row.get(2)?,
-            start_col: row.get(3)?,
-            end_col: row.get(4)?,
-            annotation_type: row.get(5)?,
-            severity: row.get(6)?,
-            message: row.get(7)?,
-            suggestion: row.get(8)?,
-            context: row.get(9)?,
-            text_hash: row.get(10)?,
-            status: row.get(11)?,
-            created_at: row.get(12)?,
-            dismissed_at: row.get(13)?,
-        })
-    })?.collect::<Result<Vec<_>, _>>()?;
-    
+
+    let annotations = stmt
+        .query_map([scene_id], |row| {
+            Ok(LektoratAnnotation {
+                id: row.get(0)?,
+                scene_id: row.get(1)?,
+                line: row.get(2)?,
+                start_col: row.get(3)?,
+                end_col: row.get(4)?,
+                annotation_type: row.get(5)?,
+                severity: row.get(6)?,
+                message: row.get(7)?,
+                suggestion: row.get(8)?,
+                context: row.get(9)?,
+                text_hash: row.get(10)?,
+                status: row.get(11)?,
+                created_at: row.get(12)?,
+                dismissed_at: row.get(13)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
+
     Ok(annotations)
 }
 
@@ -1892,7 +2147,7 @@ pub fn clear_active_lektorat_annotations(
 // Book Metadata CRUD
 // ============================================================
 
-use crate::models::{BookMetadata, Edition, EditionType, EditionLayoutOverrides};
+use crate::models::{BookMetadata, Edition, EditionLayoutOverrides, EditionType};
 
 /// Get book metadata
 pub fn get_book_metadata(conn: &Connection) -> Result<BookMetadata, DatabaseOperationError> {
@@ -1903,9 +2158,9 @@ pub fn get_book_metadata(conn: &Connection) -> Result<BookMetadata, DatabaseOper
                 foreword_author, preface, introduction, about_author, also_by_author,
                 series_name, series_number, cover_image_path, cover_designer,
                 categories, keywords, description, short_description
-         FROM book_metadata WHERE id = 'main'"
+         FROM book_metadata WHERE id = 'main'",
     )?;
-    
+
     let result = stmt.query_row([], |row| {
         Ok(BookMetadata {
             subtitle: row.get(0).ok(),
@@ -1927,24 +2182,30 @@ pub fn get_book_metadata(conn: &Connection) -> Result<BookMetadata, DatabaseOper
             preface: row.get(16).ok(),
             introduction: row.get(17).ok(),
             about_author: row.get(18).ok(),
-            also_by_author: row.get::<_, Option<String>>(19).ok()
+            also_by_author: row
+                .get::<_, Option<String>>(19)
+                .ok()
                 .flatten()
                 .map(|s| serde_json::from_str(&s).unwrap_or_default()),
             series_name: row.get(20).ok(),
             series_number: row.get(21).ok(),
             cover_image_path: row.get(22).ok(),
             cover_designer: row.get(23).ok(),
-            categories: row.get::<_, Option<String>>(24).ok()
+            categories: row
+                .get::<_, Option<String>>(24)
+                .ok()
                 .flatten()
                 .map(|s| serde_json::from_str(&s).unwrap_or_default()),
-            keywords: row.get::<_, Option<String>>(25).ok()
+            keywords: row
+                .get::<_, Option<String>>(25)
+                .ok()
                 .flatten()
                 .map(|s| serde_json::from_str(&s).unwrap_or_default()),
             description: row.get(26).ok(),
             short_description: row.get(27).ok(),
         })
     });
-    
+
     match result {
         Ok(metadata) => Ok(metadata),
         Err(rusqlite::Error::QueryReturnedNoRows) => Ok(BookMetadata::default()),
@@ -1953,14 +2214,23 @@ pub fn get_book_metadata(conn: &Connection) -> Result<BookMetadata, DatabaseOper
 }
 
 /// Update book metadata
-pub fn update_book_metadata(conn: &Connection, metadata: &BookMetadata) -> Result<(), DatabaseOperationError> {
-    let also_by = metadata.also_by_author.as_ref()
+pub fn update_book_metadata(
+    conn: &Connection,
+    metadata: &BookMetadata,
+) -> Result<(), DatabaseOperationError> {
+    let also_by = metadata
+        .also_by_author
+        .as_ref()
         .map(|v| serde_json::to_string(v).unwrap_or_default());
-    let categories = metadata.categories.as_ref()
+    let categories = metadata
+        .categories
+        .as_ref()
         .map(|v| serde_json::to_string(v).unwrap_or_default());
-    let keywords = metadata.keywords.as_ref()
+    let keywords = metadata
+        .keywords
+        .as_ref()
         .map(|v| serde_json::to_string(v).unwrap_or_default());
-    
+
     conn.execute(
         "INSERT OR REPLACE INTO book_metadata (
             id, subtitle, author_bio, publisher, publish_date, edition_text, language,
@@ -1974,14 +2244,34 @@ pub fn update_book_metadata(conn: &Connection, metadata: &BookMetadata) -> Resul
             ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, CURRENT_TIMESTAMP
         )",
         rusqlite::params![
-            metadata.subtitle, metadata.author_bio, metadata.publisher, metadata.publish_date,
-            metadata.edition, metadata.language, metadata.copyright_year, metadata.copyright_holder,
-            metadata.copyright_text, if metadata.all_rights_reserved { 1 } else { 0 },
-            metadata.dedication, metadata.epigraph, metadata.epigraph_author, metadata.acknowledgments,
-            metadata.foreword, metadata.foreword_author, metadata.preface, metadata.introduction,
-            metadata.about_author, also_by, metadata.series_name, metadata.series_number,
-            metadata.cover_image_path, metadata.cover_designer, categories, keywords,
-            metadata.description, metadata.short_description
+            metadata.subtitle,
+            metadata.author_bio,
+            metadata.publisher,
+            metadata.publish_date,
+            metadata.edition,
+            metadata.language,
+            metadata.copyright_year,
+            metadata.copyright_holder,
+            metadata.copyright_text,
+            if metadata.all_rights_reserved { 1 } else { 0 },
+            metadata.dedication,
+            metadata.epigraph,
+            metadata.epigraph_author,
+            metadata.acknowledgments,
+            metadata.foreword,
+            metadata.foreword_author,
+            metadata.preface,
+            metadata.introduction,
+            metadata.about_author,
+            also_by,
+            metadata.series_name,
+            metadata.series_number,
+            metadata.cover_image_path,
+            metadata.cover_designer,
+            categories,
+            keywords,
+            metadata.description,
+            metadata.short_description
         ],
     )?;
     Ok(())
@@ -2000,13 +2290,13 @@ pub fn list_editions(conn: &Connection) -> Result<Vec<Edition>, DatabaseOperatio
                 ebook_cover_path, print_cover_path, spine_width, bleed,
                 distributor, distributor_id, published, publish_date,
                 created_at, updated_at
-         FROM editions ORDER BY created_at ASC"
+         FROM editions ORDER BY created_at ASC",
     )?;
-    
+
     let rows = stmt.query_map([], |row| {
         let edition_type_str: String = row.get(2)?;
         let layout_overrides_json: Option<String> = row.get(9).ok();
-        
+
         Ok(Edition {
             id: row.get(0)?,
             name: row.get(1)?,
@@ -2027,8 +2317,7 @@ pub fn list_editions(conn: &Connection) -> Result<Vec<Edition>, DatabaseOperatio
             price: row.get(6).ok(),
             currency: row.get(7).ok(),
             layout_preset_id: row.get(8).ok(),
-            layout_overrides: layout_overrides_json
-                .and_then(|s| serde_json::from_str(&s).ok()),
+            layout_overrides: layout_overrides_json.and_then(|s| serde_json::from_str(&s).ok()),
             include_about_author: row.get::<_, i32>(10).unwrap_or(1) == 1,
             include_also_by: row.get::<_, i32>(11).unwrap_or(1) == 1,
             include_preview: row.get::<_, i32>(12).unwrap_or(0) == 1,
@@ -2045,16 +2334,19 @@ pub fn list_editions(conn: &Connection) -> Result<Vec<Edition>, DatabaseOperatio
             updated_at: row.get(23).ok(),
         })
     })?;
-    
+
     rows.collect::<Result<Vec<_>, _>>().map_err(|e| e.into())
 }
 
 /// Get a specific edition
 pub fn get_edition(conn: &Connection, edition_id: &str) -> Result<Edition, DatabaseOperationError> {
     let editions = list_editions(conn)?;
-    editions.into_iter()
+    editions
+        .into_iter()
         .find(|e| e.id == edition_id)
-        .ok_or_else(|| DatabaseOperationError::NotFound(format!("Edition {} not found", edition_id)))
+        .ok_or_else(|| {
+            DatabaseOperationError::NotFound(format!("Edition {} not found", edition_id))
+        })
 }
 
 /// Create a new edition
@@ -2070,10 +2362,12 @@ pub fn create_edition(conn: &Connection, edition: &Edition) -> Result<(), Databa
         EditionType::Pdf => "pdf",
         EditionType::Custom => "custom",
     };
-    
-    let layout_overrides_json = edition.layout_overrides.as_ref()
+
+    let layout_overrides_json = edition
+        .layout_overrides
+        .as_ref()
         .map(|o| serde_json::to_string(o).unwrap_or_default());
-    
+
     conn.execute(
         "INSERT INTO editions (
             id, name, edition_type, isbn, isbn_13, asin, price, currency,
@@ -2086,15 +2380,28 @@ pub fn create_edition(conn: &Connection, edition: &Edition) -> Result<(), Databa
             ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22
         )",
         rusqlite::params![
-            edition.id, edition.name, edition_type_str, edition.isbn, edition.isbn_13,
-            edition.asin, edition.price, edition.currency, edition.layout_preset_id,
+            edition.id,
+            edition.name,
+            edition_type_str,
+            edition.isbn,
+            edition.isbn_13,
+            edition.asin,
+            edition.price,
+            edition.currency,
+            edition.layout_preset_id,
             layout_overrides_json,
             if edition.include_about_author { 1 } else { 0 },
             if edition.include_also_by { 1 } else { 0 },
             if edition.include_preview { 1 } else { 0 },
-            edition.preview_chapter_id, edition.ebook_cover_path, edition.print_cover_path,
-            edition.spine_width, edition.bleed, edition.distributor, edition.distributor_id,
-            if edition.published { 1 } else { 0 }, edition.publish_date
+            edition.preview_chapter_id,
+            edition.ebook_cover_path,
+            edition.print_cover_path,
+            edition.spine_width,
+            edition.bleed,
+            edition.distributor,
+            edition.distributor_id,
+            if edition.published { 1 } else { 0 },
+            edition.publish_date
         ],
     )?;
     Ok(())
@@ -2113,10 +2420,12 @@ pub fn update_edition(conn: &Connection, edition: &Edition) -> Result<(), Databa
         EditionType::Pdf => "pdf",
         EditionType::Custom => "custom",
     };
-    
-    let layout_overrides_json = edition.layout_overrides.as_ref()
+
+    let layout_overrides_json = edition
+        .layout_overrides
+        .as_ref()
         .map(|o| serde_json::to_string(o).unwrap_or_default());
-    
+
     conn.execute(
         "UPDATE editions SET
             name = ?1, edition_type = ?2, isbn = ?3, isbn_13 = ?4, asin = ?5,
@@ -2127,14 +2436,28 @@ pub fn update_edition(conn: &Connection, edition: &Edition) -> Result<(), Databa
             published = ?20, publish_date = ?21, updated_at = CURRENT_TIMESTAMP
          WHERE id = ?22",
         rusqlite::params![
-            edition.name, edition_type_str, edition.isbn, edition.isbn_13, edition.asin,
-            edition.price, edition.currency, edition.layout_preset_id, layout_overrides_json,
+            edition.name,
+            edition_type_str,
+            edition.isbn,
+            edition.isbn_13,
+            edition.asin,
+            edition.price,
+            edition.currency,
+            edition.layout_preset_id,
+            layout_overrides_json,
             if edition.include_about_author { 1 } else { 0 },
             if edition.include_also_by { 1 } else { 0 },
             if edition.include_preview { 1 } else { 0 },
-            edition.preview_chapter_id, edition.ebook_cover_path, edition.print_cover_path,
-            edition.spine_width, edition.bleed, edition.distributor, edition.distributor_id,
-            if edition.published { 1 } else { 0 }, edition.publish_date, edition.id
+            edition.preview_chapter_id,
+            edition.ebook_cover_path,
+            edition.print_cover_path,
+            edition.spine_width,
+            edition.bleed,
+            edition.distributor,
+            edition.distributor_id,
+            if edition.published { 1 } else { 0 },
+            edition.publish_date,
+            edition.id
         ],
     )?;
     Ok(())

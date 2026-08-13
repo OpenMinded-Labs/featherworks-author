@@ -1,15 +1,16 @@
-use featherworks_author::storage::database;
-use featherworks_author::services::scenes_service;
 use featherworks_author::domain::{doc, patch};
-use tempfile::tempdir;
+use featherworks_author::services::scenes_service;
+use featherworks_author::storage::database;
 use std::fs;
+use tempfile::tempdir;
 
 #[test]
 fn journal_writes_lines() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("p.sqlite");
     let journal_path = dir.path().join("project.journal");
-    let conn = database::create_database(db_path.to_str().unwrap(), "P", "A", None, None, None).unwrap();
+    let conn =
+        database::create_database(db_path.to_str().unwrap(), "P", "A", None, None, None).unwrap();
     // Manuell Journal setzen (normal macht main das)
     scenes_service::set_journal_path(Some(journal_path.to_string_lossy().to_string()));
 

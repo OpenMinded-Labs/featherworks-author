@@ -1,24 +1,22 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 // Featherworks Author Backend
 
-use tauri::{CustomMenuItem, Menu, State, Submenu, WindowEvent, Manager};
-use featherworks_author::storage::database::{self, AppState};
-use rusqlite::Connection;
 use ai::entity_extraction::ExtractedEntity;
-use featherworks_author::storage::container;
-use featherworks_author::models::{Project, Chapter, Scene};
-use featherworks_author::services::scenes_service;
-use featherworks_author::services::recovery_service;
+use featherworks_author::ai::{self, downloader, hardware, registry, stream};
 use featherworks_author::domain::{doc, patch};
-use featherworks_author::ai::{self, stream, hardware, registry, downloader};
-use featherworks_author::storage::export as export_mod;
-use featherworks_author::spellcheck;
 use featherworks_author::languagetool;
+use featherworks_author::layout;
+use featherworks_author::models::{Chapter, Project, Scene};
 use featherworks_author::plot;
 use featherworks_author::research;
-use featherworks_author::layout;
-
-
+use featherworks_author::services::recovery_service;
+use featherworks_author::services::scenes_service;
+use featherworks_author::spellcheck;
+use featherworks_author::storage::container;
+use featherworks_author::storage::database::{self, AppState};
+use featherworks_author::storage::export as export_mod;
+use rusqlite::Connection;
+use tauri::{CustomMenuItem, Manager, Menu, State, Submenu, WindowEvent};
 
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
 struct RecentProjectEntry {
@@ -101,7 +99,8 @@ fn export_project_fwa(path: String, state: State<AppState>) -> Result<(), String
 fn import_project_fwa(path: String, state: State<AppState>) -> Result<(), String> {
     let mut db_lock = state.db.lock().map_err(|e| e.to_string())?;
     let conn = db_lock.as_mut().ok_or("Database not open")?;
-    export_mod::import_project_from_fwa(conn, std::path::Path::new(&path)).map_err(|e| e.to_string())
+    export_mod::import_project_from_fwa(conn, std::path::Path::new(&path))
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -129,19 +128,26 @@ fn get_scene_content(id: String, state: State<AppState>) -> Result<(String, i32)
     let db_lock = state.db.lock().map_err(|e| e.to_string())?;
     let conn = db_lock.as_ref().ok_or("Database not open")?;
     if let Ok((json_opt, plain, wc)) = database::get_scene_content_with_json(conn, &id) {
-        if let Some(js) = json_opt { return Ok((js, wc)); }
+        if let Some(js) = json_opt {
+            return Ok((js, wc));
+        }
         return Ok((plain, wc));
     }
-    let (content, word_count) = database::get_scene_content(conn, &id).map_err(|e| e.to_string())?; // fallback
+    let (content, word_count) =
+        database::get_scene_content(conn, &id).map_err(|e| e.to_string())?; // fallback
     Ok((content, word_count))
 }
 
 #[tauri::command]
-fn update_scene_content(req: UpdateSceneContentRequest, state: State<AppState>) -> Result<(), String> {
+fn update_scene_content(
+    req: UpdateSceneContentRequest,
+    state: State<AppState>,
+) -> Result<(), String> {
     let db_lock = state.db.lock().map_err(|e| e.to_string())?;
     let conn = db_lock.as_ref().ok_or("Database not open")?;
     let word_count = req.content.split_whitespace().count() as i32;
-    database::update_scene_content(conn, &req.id, &req.content, word_count).map_err(|e| e.to_string())
+    database::update_scene_content(conn, &req.id, &req.content, word_count)
+        .map_err(|e| e.to_string())
 }
 
 #[derive(serde::Deserialize)]
@@ -168,8 +174,12 @@ fn apply_scene_patch(req: ApplyScenePatchRequest, state: State<AppState>) -> Res
     let conn = db_lock.as_ref().ok_or("Database not open")?;
     let p = if let Some(pv) = req.patch {
         match pv {
-            IncomingPatch::InsertText { offset, text } => patch::Patch(patch::PatchKind::InsertText { offset, text }),
-            IncomingPatch::DeleteRange { start, end } => patch::Patch(patch::PatchKind::DeleteRange { start, end }),
+            IncomingPatch::InsertText { offset, text } => {
+                patch::Patch(patch::PatchKind::InsertText { offset, text })
+            }
+            IncomingPatch::DeleteRange { start, end } => {
+                patch::Patch(patch::PatchKind::DeleteRange { start, end })
+            }
             IncomingPatch::FullReplace { new_text } => {
                 let new_doc = doc::Node::plain_text(&new_text);
                 patch::Patch::full(new_doc)
@@ -184,7 +194,9 @@ fn apply_scene_patch(req: ApplyScenePatchRequest, state: State<AppState>) -> Res
 }
 
 #[derive(serde::Deserialize)]
-struct SceneIdRequest { scene_id: String }
+struct SceneIdRequest {
+    scene_id: String,
+}
 
 #[tauri::command]
 fn undo_scene(req: SceneIdRequest, state: State<AppState>) -> Result<Option<i32>, String> {
@@ -210,21 +222,44 @@ struct RecoveryStatus {
 
 #[tauri::command]
 fn check_recovery(state: State<AppState>) -> Result<RecoveryStatus, String> {
-    let journal = state.journal_path.lock().map_err(|e| e.to_string())?.clone();
+    let journal = state
+        .journal_path
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
     if let Some(jp) = journal {
         match recovery_service::attempt_recovery(&jp) {
-            Ok(Some(report)) => Ok(RecoveryStatus { available: true, snapshot_count: report.snapshot_count, incremental_count: report.incremental_count, scenes: report.scenes }),
-            Ok(None) => Ok(RecoveryStatus { available: false, snapshot_count: 0, incremental_count: 0, scenes: vec![] }),
-            Err(e) => Err(e.to_string())
+            Ok(Some(report)) => Ok(RecoveryStatus {
+                available: true,
+                snapshot_count: report.snapshot_count,
+                incremental_count: report.incremental_count,
+                scenes: report.scenes,
+            }),
+            Ok(None) => Ok(RecoveryStatus {
+                available: false,
+                snapshot_count: 0,
+                incremental_count: 0,
+                scenes: vec![],
+            }),
+            Err(e) => Err(e.to_string()),
         }
     } else {
-        Ok(RecoveryStatus { available: false, snapshot_count: 0, incremental_count: 0, scenes: vec![] })
+        Ok(RecoveryStatus {
+            available: false,
+            snapshot_count: 0,
+            incremental_count: 0,
+            scenes: vec![],
+        })
     }
 }
 
 #[tauri::command]
 fn apply_recovery(state: State<AppState>) -> Result<usize, String> {
-    let journal = state.journal_path.lock().map_err(|e| e.to_string())?.clone();
+    let journal = state
+        .journal_path
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
     let mut applied = 0usize;
     if let Some(jp) = journal {
         if let Ok(Some(report)) = recovery_service::attempt_recovery(&jp) {
@@ -232,7 +267,9 @@ fn apply_recovery(state: State<AppState>) -> Result<usize, String> {
             let db_lock = state.db.lock().map_err(|e| e.to_string())?;
             let conn = db_lock.as_ref().ok_or("Database not open")?;
             for (scene_id, p) in patches {
-                if scenes_service::apply_patch(conn, &scene_id, p).is_ok() { applied += 1; }
+                if scenes_service::apply_patch(conn, &scene_id, p).is_ok() {
+                    applied += 1;
+                }
             }
         }
     }
@@ -240,7 +277,10 @@ fn apply_recovery(state: State<AppState>) -> Result<usize, String> {
 }
 
 #[tauri::command]
-fn update_project_metadata_cmd(req: UpdateProjectMetadataRequest, state: State<AppState>) -> Result<(), String> {
+fn update_project_metadata_cmd(
+    req: UpdateProjectMetadataRequest,
+    state: State<AppState>,
+) -> Result<(), String> {
     let db_lock = state.db.lock().map_err(|e| e.to_string())?;
     let conn = db_lock.as_ref().ok_or("Database not open")?;
     database::update_project_metadata(
@@ -250,15 +290,24 @@ fn update_project_metadata_cmd(req: UpdateProjectMetadataRequest, state: State<A
         req.short_name.as_deref(),
         req.genre.as_deref(),
         req.target_pages,
-    ).map_err(|e| e.to_string())
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 fn get_project_status(state: State<AppState>) -> Result<ProjectStatusResponse, String> {
     let path = state.db_path.lock().map_err(|e| e.to_string())?.clone();
-    let container = state.container_path.lock().map_err(|e| e.to_string())?.clone();
+    let container = state
+        .container_path
+        .lock()
+        .map_err(|e| e.to_string())?
+        .clone();
     let is_temp = *state.db_is_temp.lock().map_err(|e| e.to_string())?;
-    Ok(ProjectStatusResponse { path, container_path: container, is_temp })
+    Ok(ProjectStatusResponse {
+        path,
+        container_path: container,
+        is_temp,
+    })
 }
 
 #[tauri::command]
@@ -276,7 +325,11 @@ fn create_scene(req: CreateSceneRequest, state: State<AppState>) -> Result<Scene
 }
 
 #[tauri::command]
-fn rename_chapter(chapter_id: String, new_title: String, state: State<AppState>) -> Result<(), String> {
+fn rename_chapter(
+    chapter_id: String,
+    new_title: String,
+    state: State<AppState>,
+) -> Result<(), String> {
     let db_lock = state.db.lock().map_err(|e| e.to_string())?;
     let conn = db_lock.as_ref().ok_or("Database not open")?;
     database::rename_chapter(conn, &chapter_id, &new_title).map_err(|e| e.to_string())
@@ -298,7 +351,11 @@ fn get_scene_note_cmd(scene_id: String, state: State<AppState>) -> Result<String
 }
 
 #[tauri::command]
-fn save_scene_note_cmd(scene_id: String, content: String, state: State<AppState>) -> Result<(), String> {
+fn save_scene_note_cmd(
+    scene_id: String,
+    content: String,
+    state: State<AppState>,
+) -> Result<(), String> {
     let db_lock = state.db.lock().map_err(|e| e.to_string())?;
     let conn = db_lock.as_ref().ok_or("Database not open")?;
     database::upsert_scene_note(conn, &scene_id, &content).map_err(|e| e.to_string())
@@ -312,7 +369,11 @@ fn reorder_chapters(ordered_ids: Vec<String>, state: State<AppState>) -> Result<
 }
 
 #[tauri::command]
-fn reorder_scenes(chapter_id: String, ordered_scene_ids: Vec<String>, state: State<AppState>) -> Result<(), String> {
+fn reorder_scenes(
+    chapter_id: String,
+    ordered_scene_ids: Vec<String>,
+    state: State<AppState>,
+) -> Result<(), String> {
     let mut db_lock = state.db.lock().map_err(|e| e.to_string())?;
     let conn = db_lock.as_mut().ok_or("Database not open")?;
     database::reorder_scenes(conn, &chapter_id, &ordered_scene_ids).map_err(|e| e.to_string())
@@ -326,7 +387,10 @@ fn get_editor_settings(state: State<AppState>) -> Result<database::EditorSetting
 }
 
 #[tauri::command]
-fn save_editor_settings(settings: database::EditorSettings, state: State<AppState>) -> Result<(), String> {
+fn save_editor_settings(
+    settings: database::EditorSettings,
+    state: State<AppState>,
+) -> Result<(), String> {
     let mut db_lock = state.db.lock().map_err(|e| e.to_string())?;
     let conn = db_lock.as_mut().ok_or("Database not open")?;
     database::save_settings(conn, &settings).map_err(|e| e.to_string())
@@ -344,22 +408,38 @@ fn load_full_project(state: State<AppState>) -> Result<FullProjectPayload, Strin
     let db_lock = state.db.lock().map_err(|e| e.to_string())?;
     let conn = db_lock.as_ref().ok_or("Database not open")?;
     // Ensure project row for legacy DBs
-    if let Err(e) = database::ensure_project_exists(conn, "Unbenanntes Projekt", "Unbekannt") { return Err(e.to_string()); }
+    if let Err(e) = database::ensure_project_exists(conn, "Unbenanntes Projekt", "Unbekannt") {
+        return Err(e.to_string());
+    }
     let mut project = database::get_project(conn).map_err(|e| e.to_string())?;
     let chapters = database::list_chapters(conn).map_err(|e| e.to_string())?;
     project.chapters = chapters.clone();
     let mut scenes_by_chapter = std::collections::HashMap::new();
     for ch in &chapters {
         match database::list_scenes(conn, &ch.id) {
-            Ok(v) => { scenes_by_chapter.insert(ch.id.clone(), v); },
-            Err(e) => { return Err(format!("Fehler beim Laden der Szenen für Kapitel {}: {}", ch.id, e)); }
+            Ok(v) => {
+                scenes_by_chapter.insert(ch.id.clone(), v);
+            }
+            Err(e) => {
+                return Err(format!(
+                    "Fehler beim Laden der Szenen für Kapitel {}: {}",
+                    ch.id, e
+                ));
+            }
         }
     }
-    Ok(FullProjectPayload { project, chapters, scenes_by_chapter })
+    Ok(FullProjectPayload {
+        project,
+        chapters,
+        scenes_by_chapter,
+    })
 }
 
 fn get_recents_path(app_handle: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
-    let config_dir = app_handle.path_resolver().app_config_dir().ok_or("Could not find app config dir")?;
+    let config_dir = app_handle
+        .path_resolver()
+        .app_config_dir()
+        .ok_or("Could not find app config dir")?;
     Ok(config_dir.join("recents.json"))
 }
 
@@ -369,13 +449,19 @@ fn read_recent_projects(app_handle: &tauri::AppHandle) -> Result<Vec<RecentProje
         return Ok(Vec::new());
     }
     let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let recents: Vec<RecentProjectEntry> = serde_json::from_reader(file).map_err(|e| e.to_string())?;
+    let recents: Vec<RecentProjectEntry> =
+        serde_json::from_reader(file).map_err(|e| e.to_string())?;
     Ok(recents)
 }
 
-fn write_recent_projects(app_handle: &tauri::AppHandle, recents: &[RecentProjectEntry]) -> Result<(), String> {
+fn write_recent_projects(
+    app_handle: &tauri::AppHandle,
+    recents: &[RecentProjectEntry],
+) -> Result<(), String> {
     let path = get_recents_path(app_handle)?;
-    if let Some(dir) = path.parent() { std::fs::create_dir_all(dir).map_err(|e| e.to_string())?; }
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
     let file = std::fs::File::create(path).map_err(|e| e.to_string())?;
     serde_json::to_writer_pretty(file, recents).map_err(|e| e.to_string())?;
     Ok(())
@@ -397,28 +483,51 @@ struct ProjectLibraryMeta {
     tags: Option<Vec<String>>,
 }
 
-fn add_to_recents_with_meta(app_handle: &tauri::AppHandle, path: &str, title: &str, meta: Option<ProjectLibraryMeta>) -> Result<(), String> {
+fn add_to_recents_with_meta(
+    app_handle: &tauri::AppHandle,
+    path: &str,
+    title: &str,
+    meta: Option<ProjectLibraryMeta>,
+) -> Result<(), String> {
     let mut recents = read_recent_projects(app_handle).unwrap_or_else(|_| Vec::new());
-    
+
     // Preserve existing metadata if updating
     let existing_meta = recents.iter().find(|p| p.path == path).cloned();
     recents.retain(|p| p.path != path);
-    
+
     let meta = meta.unwrap_or_default();
     let now = chrono::Utc::now().to_rfc3339();
-    
-    recents.insert(0, RecentProjectEntry {
-        path: path.to_string(),
-        title: title.to_string(),
-        last_opened: now.clone(),
-        author: meta.author.or_else(|| existing_meta.as_ref().and_then(|e| e.author.clone())),
-        genre: meta.genre.or_else(|| existing_meta.as_ref().and_then(|e| e.genre.clone())),
-        series: meta.series.or_else(|| existing_meta.as_ref().and_then(|e| e.series.clone())),
-        series_order: meta.series_order.or_else(|| existing_meta.as_ref().and_then(|e| e.series_order)),
-        word_count: meta.word_count.or_else(|| existing_meta.as_ref().and_then(|e| e.word_count)),
-        created_at: existing_meta.as_ref().and_then(|e| e.created_at.clone()).or(Some(now)),
-        tags: meta.tags.or_else(|| existing_meta.as_ref().and_then(|e| e.tags.clone())),
-    });
+
+    recents.insert(
+        0,
+        RecentProjectEntry {
+            path: path.to_string(),
+            title: title.to_string(),
+            last_opened: now.clone(),
+            author: meta
+                .author
+                .or_else(|| existing_meta.as_ref().and_then(|e| e.author.clone())),
+            genre: meta
+                .genre
+                .or_else(|| existing_meta.as_ref().and_then(|e| e.genre.clone())),
+            series: meta
+                .series
+                .or_else(|| existing_meta.as_ref().and_then(|e| e.series.clone())),
+            series_order: meta
+                .series_order
+                .or_else(|| existing_meta.as_ref().and_then(|e| e.series_order)),
+            word_count: meta
+                .word_count
+                .or_else(|| existing_meta.as_ref().and_then(|e| e.word_count)),
+            created_at: existing_meta
+                .as_ref()
+                .and_then(|e| e.created_at.clone())
+                .or(Some(now)),
+            tags: meta
+                .tags
+                .or_else(|| existing_meta.as_ref().and_then(|e| e.tags.clone())),
+        },
+    );
     recents.truncate(50); // Keep 50 projects for library
     write_recent_projects(app_handle, &recents)
 }
@@ -429,7 +538,12 @@ fn add_to_recents(app_handle: &tauri::AppHandle, path: &str, title: &str) -> Res
 
 // Update library metadata for a project
 #[tauri::command]
-fn update_library_project(app_handle: tauri::AppHandle, path: String, title: String, meta: ProjectLibraryMeta) -> Result<(), String> {
+fn update_library_project(
+    app_handle: tauri::AppHandle,
+    path: String,
+    title: String,
+    meta: ProjectLibraryMeta,
+) -> Result<(), String> {
     add_to_recents_with_meta(&app_handle, &path, &title, Some(meta))
 }
 
@@ -445,10 +559,7 @@ fn remove_from_library(app_handle: tauri::AppHandle, path: String) -> Result<(),
 #[tauri::command]
 fn list_series(app_handle: tauri::AppHandle) -> Result<Vec<String>, String> {
     let recents = read_recent_projects(&app_handle)?;
-    let mut series: Vec<String> = recents
-        .iter()
-        .filter_map(|p| p.series.clone())
-        .collect();
+    let mut series: Vec<String> = recents.iter().filter_map(|p| p.series.clone()).collect();
     series.sort();
     series.dedup();
     Ok(series)
@@ -458,10 +569,7 @@ fn list_series(app_handle: tauri::AppHandle) -> Result<Vec<String>, String> {
 #[tauri::command]
 fn list_genres(app_handle: tauri::AppHandle) -> Result<Vec<String>, String> {
     let recents = read_recent_projects(&app_handle)?;
-    let mut genres: Vec<String> = recents
-        .iter()
-        .filter_map(|p| p.genre.clone())
-        .collect();
+    let mut genres: Vec<String> = recents.iter().filter_map(|p| p.genre.clone()).collect();
     genres.sort();
     genres.dedup();
     Ok(genres)
@@ -482,60 +590,64 @@ fn list_tags(app_handle: tauri::AppHandle) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-fn open_project(path: String, state: State<'_, AppState>, app_handle: tauri::AppHandle) -> Result<Project, String> {
+fn open_project(
+    path: String,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<Project, String> {
     log::info!("Opening project at path: {}", path);
-    
+
     // Check if file exists first
     if !std::path::Path::new(&path).exists() {
         let err = format!("Project file does not exist: {}", path);
         log::error!("{}", err);
         return Err(err);
     }
-    
+
     let conn = match database::open_database(&path) {
         Ok(c) => {
             log::info!("Successfully opened database");
             c
-        },
-        Err(e) => { 
+        }
+        Err(e) => {
             let err = format!("Failed to open database: {}", e);
             log::error!("{}", err);
-            eprintln!("[open_project] failed to open db: {e}"); 
-            return Err(err); 
+            eprintln!("[open_project] failed to open db: {e}");
+            return Err(err);
         }
     };
-    
+
     // Heal legacy DBs missing the project row
     if let Err(e) = database::ensure_project_exists(&conn, "Unbenanntes Projekt", "Unbekannt") {
         let err = format!("Failed to ensure project exists: {}", e);
         log::error!("{}", err);
         return Err(err);
     }
-    
+
     // Get project details before moving the connection into the state
     let mut project = match database::get_project(&conn) {
         Ok(p) => {
             log::info!("Successfully retrieved project: {}", p.title);
             p
-        },
-        Err(e) => { 
+        }
+        Err(e) => {
             let err = format!("Failed to get project: {}", e);
             log::error!("{}", err);
-            eprintln!("[open_project] get_project error: {e}"); 
-            return Err(err); 
+            eprintln!("[open_project] get_project error: {e}");
+            return Err(err);
         }
     };
-    
+
     project.chapters = match database::list_chapters(&conn) {
         Ok(v) => {
             log::info!("Successfully retrieved {} chapters", v.len());
             v
-        },
-        Err(e) => { 
+        }
+        Err(e) => {
             let err = format!("Failed to list chapters: {}", e);
             log::error!("{}", err);
-            eprintln!("[open_project] list_chapters error: {e}"); 
-            return Err(err); 
+            eprintln!("[open_project] list_chapters error: {e}");
+            return Err(err);
         }
     };
 
@@ -555,12 +667,16 @@ fn open_project(path: String, state: State<'_, AppState>, app_handle: tauri::App
             let mut jp = state.journal_path.lock().map_err(|e| e.to_string())?;
             *jp = Some(journal.to_string_lossy().to_string());
         }
-        featherworks_author::services::scenes_service::set_journal_path(Some(journal.to_string_lossy().to_string()));
+        featherworks_author::services::scenes_service::set_journal_path(Some(
+            journal.to_string_lossy().to_string(),
+        ));
     }
-        {
-            let mut temp_flag = state.db_is_temp.lock().map_err(|e| e.to_string())?; *temp_flag = false;
-            let mut container_lock = state.container_path.lock().map_err(|e| e.to_string())?; *container_lock = None;
-        }
+    {
+        let mut temp_flag = state.db_is_temp.lock().map_err(|e| e.to_string())?;
+        *temp_flag = false;
+        let mut container_lock = state.container_path.lock().map_err(|e| e.to_string())?;
+        *container_lock = None;
+    }
 
     add_to_recents(&app_handle, &path, &project.title)?;
 
@@ -568,9 +684,19 @@ fn open_project(path: String, state: State<'_, AppState>, app_handle: tauri::App
 }
 
 #[tauri::command]
-fn create_project(path: String, req: CreateProjectRequest, state: State<'_, AppState>, app_handle: tauri::AppHandle) -> Result<Project, String> {
-    log::info!("Creating new project: {} by {} at path: {}", req.title, req.author, path);
-    
+fn create_project(
+    path: String,
+    req: CreateProjectRequest,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<Project, String> {
+    log::info!(
+        "Creating new project: {} by {} at path: {}",
+        req.title,
+        req.author,
+        path
+    );
+
     // Create DB and write project row including metadata
     let conn = match database::create_database(
         &path,
@@ -583,7 +709,7 @@ fn create_project(path: String, req: CreateProjectRequest, state: State<'_, AppS
         Ok(c) => {
             log::info!("Successfully created database");
             c
-        },
+        }
         Err(e) => {
             let err = format!("Failed to create database: {}", e);
             log::error!("{}", err);
@@ -592,29 +718,32 @@ fn create_project(path: String, req: CreateProjectRequest, state: State<'_, AppS
     };
 
     // Read back project and chapters before moving connection into state
-    let mut project = match database::get_project(&conn) { 
+    let mut project = match database::get_project(&conn) {
         Ok(p) => {
             log::info!("Successfully retrieved created project: {}", p.title);
             p
-        }, 
-        Err(e) => { 
+        }
+        Err(e) => {
             let err = format!("Failed to get created project: {}", e);
             log::error!("{}", err);
-            eprintln!("[create_project] get_project error: {e}"); 
-            return Err(err); 
+            eprintln!("[create_project] get_project error: {e}");
+            return Err(err);
         }
     };
-    
-    project.chapters = match database::list_chapters(&conn) { 
+
+    project.chapters = match database::list_chapters(&conn) {
         Ok(v) => {
-            log::info!("Successfully retrieved {} chapters for new project", v.len());
+            log::info!(
+                "Successfully retrieved {} chapters for new project",
+                v.len()
+            );
             v
-        }, 
-        Err(e) => { 
+        }
+        Err(e) => {
             let err = format!("Failed to list chapters for new project: {}", e);
             log::error!("{}", err);
-            eprintln!("[create_project] list_chapters error: {e}"); 
-            return Err(err); 
+            eprintln!("[create_project] list_chapters error: {e}");
+            return Err(err);
         }
     };
     if project.chapters.is_empty() {
@@ -639,12 +768,16 @@ fn create_project(path: String, req: CreateProjectRequest, state: State<'_, AppS
             let mut jp = state.journal_path.lock().map_err(|e| e.to_string())?;
             *jp = Some(journal.to_string_lossy().to_string());
         }
-        featherworks_author::services::scenes_service::set_journal_path(Some(journal.to_string_lossy().to_string()));
+        featherworks_author::services::scenes_service::set_journal_path(Some(
+            journal.to_string_lossy().to_string(),
+        ));
     }
-        {
-            let mut temp_flag = state.db_is_temp.lock().map_err(|e| e.to_string())?; *temp_flag = false;
-            let mut container_lock = state.container_path.lock().map_err(|e| e.to_string())?; *container_lock = None;
-        }
+    {
+        let mut temp_flag = state.db_is_temp.lock().map_err(|e| e.to_string())?;
+        *temp_flag = false;
+        let mut container_lock = state.container_path.lock().map_err(|e| e.to_string())?;
+        *container_lock = None;
+    }
 
     add_to_recents(&app_handle, &path, &project.title)?;
     Ok(project)
@@ -661,16 +794,22 @@ fn save_project(state: State<'_, AppState>) -> Result<(), String> {
         let lock = state.db.lock().map_err(|e| e.to_string())?;
         lock.is_some()
     };
-    if !conn_exists { return Err("Keine aktive DB Verbindung".into()); }
+    if !conn_exists {
+        return Err("Keine aktive DB Verbindung".into());
+    }
     // rusqlite write-ahead log might have uncheckpointed pages. Force checkpoint to ensure file is up to date.
     {
         let mut db_lock = state.db.lock().map_err(|e| e.to_string())?;
         if let Some(conn) = db_lock.as_mut() {
-            if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(FULL);") { log::warn!("wal checkpoint failed: {e}"); }
+            if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(FULL);") {
+                log::warn!("wal checkpoint failed: {e}");
+            }
         }
     }
     // Basic existence check
-    if !std::path::Path::new(&db_path).exists() { return Err("Projektdatei existiert nicht mehr".into()); }
+    if !std::path::Path::new(&db_path).exists() {
+        return Err("Projektdatei existiert nicht mehr".into());
+    }
     Ok(())
 }
 
@@ -684,7 +823,9 @@ fn save_project_as(new_path: String, state: State<'_, AppState>) -> Result<(), S
     {
         let mut db_lock = state.db.lock().map_err(|e| e.to_string())?;
         if let Some(conn) = db_lock.as_mut() {
-            if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(FULL);") { log::warn!("wal checkpoint failed: {e}"); }
+            if let Err(e) = conn.execute_batch("PRAGMA wal_checkpoint(FULL);") {
+                log::warn!("wal checkpoint failed: {e}");
+            }
         }
     }
     std::fs::copy(&old_path, &new_path).map_err(|e| e.to_string())?;
@@ -693,22 +834,31 @@ fn save_project_as(new_path: String, state: State<'_, AppState>) -> Result<(), S
         let mut lock = state.db_path.lock().map_err(|e| e.to_string())?;
         *lock = Some(new_path);
     }
-        {
-            // After Save As from temp import, clear temp flag
-            let mut temp_flag = state.db_is_temp.lock().map_err(|e| e.to_string())?; *temp_flag = false;
-        }
+    {
+        // After Save As from temp import, clear temp flag
+        let mut temp_flag = state.db_is_temp.lock().map_err(|e| e.to_string())?;
+        *temp_flag = false;
+    }
     Ok(())
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
-struct ExportEncryptedRequest { password: String, out_path: String }
+struct ExportEncryptedRequest {
+    password: String,
+    out_path: String,
+}
 
 #[tauri::command]
-fn export_project_encrypted(req: ExportEncryptedRequest, state: State<'_, AppState>) -> Result<(), String> {
+fn export_project_encrypted(
+    req: ExportEncryptedRequest,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
     // Flush WAL
     {
         let mut db_lock = state.db.lock().map_err(|e| e.to_string())?;
-        if let Some(conn) = db_lock.as_mut() { let _ = conn.execute_batch("PRAGMA wal_checkpoint(FULL);"); }
+        if let Some(conn) = db_lock.as_mut() {
+            let _ = conn.execute_batch("PRAGMA wal_checkpoint(FULL);");
+        }
     }
     let db_path = {
         let lock = state.db_path.lock().map_err(|e| e.to_string())?;
@@ -721,23 +871,34 @@ fn export_project_encrypted(req: ExportEncryptedRequest, state: State<'_, AppSta
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
-struct ImportEncryptedRequest { path: String, password: String }
+struct ImportEncryptedRequest {
+    path: String,
+    password: String,
+}
 
 #[tauri::command]
-fn import_encrypted_project(req: ImportEncryptedRequest, state: State<'_, AppState>, app_handle: tauri::AppHandle) -> Result<Project, String> {
-    let tmp = container::load_encrypted(std::path::Path::new(&req.path), &req.password).map_err(|e| e.to_string())?;
+fn import_encrypted_project(
+    req: ImportEncryptedRequest,
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<Project, String> {
+    let tmp = container::load_encrypted(std::path::Path::new(&req.path), &req.password)
+        .map_err(|e| e.to_string())?;
     let tmp_path = tmp.path().to_string_lossy().to_string();
     // Open DB from temp file; do NOT move file yet (user can choose Save As to persist)
     let conn = database::open_database(&tmp_path).map_err(|e| e.to_string())?;
     // Ensure project row
-    database::ensure_project_exists(&conn, "Unbenanntes Projekt", "Unbekannt").map_err(|e| e.to_string())?;
+    database::ensure_project_exists(&conn, "Unbenanntes Projekt", "Unbekannt")
+        .map_err(|e| e.to_string())?;
     let mut project = database::get_project(&conn).map_err(|e| e.to_string())?;
     project.chapters = database::list_chapters(&conn).map_err(|e| e.to_string())?;
     {
-        let mut db_lock = state.db.lock().map_err(|e| e.to_string())?; *db_lock = Some(conn);
+        let mut db_lock = state.db.lock().map_err(|e| e.to_string())?;
+        *db_lock = Some(conn);
     }
     {
-        let mut path_lock = state.db_path.lock().map_err(|e| e.to_string())?; *path_lock = Some(tmp_path.clone());
+        let mut path_lock = state.db_path.lock().map_err(|e| e.to_string())?;
+        *path_lock = Some(tmp_path.clone());
     }
     if let Some(parent) = std::path::Path::new(&tmp_path).parent() {
         let journal = parent.join("project.journal");
@@ -745,12 +906,16 @@ fn import_encrypted_project(req: ImportEncryptedRequest, state: State<'_, AppSta
             let mut jp = state.journal_path.lock().map_err(|e| e.to_string())?;
             *jp = Some(journal.to_string_lossy().to_string());
         }
-        featherworks_author::services::scenes_service::set_journal_path(Some(journal.to_string_lossy().to_string()));
+        featherworks_author::services::scenes_service::set_journal_path(Some(
+            journal.to_string_lossy().to_string(),
+        ));
     }
-        {
-            let mut temp_flag = state.db_is_temp.lock().map_err(|e| e.to_string())?; *temp_flag = true;
-            let mut container_lock = state.container_path.lock().map_err(|e| e.to_string())?; *container_lock = Some(req.path.clone());
-        }
+    {
+        let mut temp_flag = state.db_is_temp.lock().map_err(|e| e.to_string())?;
+        *temp_flag = true;
+        let mut container_lock = state.container_path.lock().map_err(|e| e.to_string())?;
+        *container_lock = Some(req.path.clone());
+    }
     // Not adding to recents with temp path; maybe later with original container path
     let _ = add_to_recents(&app_handle, &req.path, &project.title);
     Ok(project)
@@ -764,7 +929,9 @@ struct SpellCheckRequest {
     lang: String,
 }
 
-fn default_lang() -> String { "de".to_string() }
+fn default_lang() -> String {
+    "de".to_string()
+}
 
 #[derive(serde::Serialize)]
 struct SpellCheckResponse {
@@ -772,12 +939,16 @@ struct SpellCheckResponse {
 }
 
 #[tauri::command]
-fn spell_check(req: SpellCheckRequest, app: tauri::AppHandle) -> Result<SpellCheckResponse, String> {
+fn spell_check(
+    req: SpellCheckRequest,
+    app: tauri::AppHandle,
+) -> Result<SpellCheckResponse, String> {
     let lang = spellcheck::Language::from_code(&req.lang)
         .ok_or_else(|| format!("Unsupported language: {}", req.lang))?;
-    
+
     // Try bundled resource dir first, then fall back to local development path
-    let dict_dir = app.path_resolver()
+    let dict_dir = app
+        .path_resolver()
         .resource_dir()
         .map(|p| p.join("dictionaries"))
         .filter(|p| p.exists())
@@ -786,15 +957,18 @@ fn spell_check(req: SpellCheckRequest, app: tauri::AppHandle) -> Result<SpellChe
             let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("resources")
                 .join("dictionaries");
-            if dev_path.exists() { Some(dev_path) } else { None }
+            if dev_path.exists() {
+                Some(dev_path)
+            } else {
+                None
+            }
         })
         .ok_or("Could not find dictionaries directory")?;
-    
+
     log::info!("[spell_check] Using dictionary dir: {:?}", dict_dir);
-    
-    let errors = spellcheck::check_text(&req.text, lang, &dict_dir)
-        .map_err(|e| e.to_string())?;
-    
+
+    let errors = spellcheck::check_text(&req.text, lang, &dict_dir).map_err(|e| e.to_string())?;
+
     Ok(SpellCheckResponse { errors })
 }
 
@@ -809,8 +983,9 @@ struct SuggestRequest {
 fn spell_suggest(req: SuggestRequest, app: tauri::AppHandle) -> Result<Vec<String>, String> {
     let lang = spellcheck::Language::from_code(&req.lang)
         .ok_or_else(|| format!("Unsupported language: {}", req.lang))?;
-    
-    let dict_dir = app.path_resolver()
+
+    let dict_dir = app
+        .path_resolver()
         .resource_dir()
         .map(|p| p.join("dictionaries"))
         .filter(|p| p.exists())
@@ -818,21 +993,25 @@ fn spell_suggest(req: SuggestRequest, app: tauri::AppHandle) -> Result<Vec<Strin
             let dev_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
                 .join("resources")
                 .join("dictionaries");
-            if dev_path.exists() { Some(dev_path) } else { None }
+            if dev_path.exists() {
+                Some(dev_path)
+            } else {
+                None
+            }
         })
         .ok_or("Could not find dictionaries directory")?;
-    
-    spellcheck::suggest(&req.word, lang, &dict_dir)
-        .map_err(|e| e.to_string())
+
+    spellcheck::suggest(&req.word, lang, &dict_dir).map_err(|e| e.to_string())
 }
 
 #[derive(serde::Deserialize)]
-struct AddWordRequest { word: String }
+struct AddWordRequest {
+    word: String,
+}
 
 #[tauri::command]
 fn spell_add_word(req: AddWordRequest) -> Result<(), String> {
-    spellcheck::add_to_user_dictionary(&req.word)
-        .map_err(|e| e.to_string())
+    spellcheck::add_to_user_dictionary(&req.word).map_err(|e| e.to_string())
 }
 
 // --- LanguageTool Commands ---
@@ -864,11 +1043,11 @@ async fn languagetool_check(req: LtCheckRequest) -> Result<LtCheckResponse, Stri
         disabled_rules: req.disabled_rules.unwrap_or_default(),
         enabled_categories: Vec::new(),
     };
-    
+
     let issues = languagetool::check_text(&req.text, &config)
         .await
         .map_err(|e| e.to_string())?;
-    
+
     Ok(LtCheckResponse { issues })
 }
 
@@ -891,7 +1070,7 @@ async fn languagetool_test(req: LtTestRequest) -> Result<bool, String> {
         disabled_rules: Vec::new(),
         enabled_categories: Vec::new(),
     };
-    
+
     languagetool::test_connection(&config)
         .await
         .map_err(|e| e.to_string())
@@ -904,7 +1083,7 @@ async fn languagetool_test(req: LtTestRequest) -> Result<bool, String> {
 struct UpdateInfo {
     available: bool,
     version: Option<String>,
-    body: Option<String>,  // Changelog/Release notes
+    body: Option<String>, // Changelog/Release notes
     date: Option<String>,
 }
 
@@ -952,12 +1131,14 @@ struct ExtractEntitiesRequest {
 /// Pass 1: Discovery - Schnelles Scannen nach Namen pro Kategorie
 /// Pass 2: Details - Validierung und JSON-Anreicherung
 #[tauri::command]
-async fn extract_entities_ai(req: ExtractEntitiesRequest, app: tauri::AppHandle) -> Result<String, String> {
+async fn extract_entities_ai(
+    req: ExtractEntitiesRequest,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
     use ai::entity_extraction::{
-        build_discovery_prompt, build_detail_prompt, parse_discovery_response,
-        parse_extraction_response, split_into_chunks, merge_entities,
-        validate_entities_against_text, extract_nicknames_from_text,
-        ScanPhase, DiscoveredEntity, ExtractedEntity,
+        build_detail_prompt, build_discovery_prompt, extract_nicknames_from_text, merge_entities,
+        parse_discovery_response, parse_extraction_response, split_into_chunks,
+        validate_entities_against_text, DiscoveredEntity, ExtractedEntity, ScanPhase,
     };
     use ai::generate_tokens_for_prompt;
     use serde_json::json;
@@ -979,7 +1160,7 @@ async fn extract_entities_ai(req: ExtractEntitiesRequest, app: tauri::AppHandle)
     tokio::spawn(async move {
         let original_text_ref = original_text.clone();
         let lang_ref = lang.clone();
-        
+
         // Catch panics um App-Absturz zu verhindern
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             // ================================================================
@@ -991,13 +1172,17 @@ async fn extract_entities_ai(req: ExtractEntitiesRequest, app: tauri::AppHandle)
                 ScanPhase::Items,
                 ScanPhase::Factions,
             ];
-            
+
             let mut all_discovered: Vec<DiscoveredEntity> = Vec::new();
             let total_phases = phases.len() + 1; // +1 für Detail-Phase
-            
+
             // Wording je nach Sprache
-            let section_word = if lang_ref == "en" { "section" } else { "Abschnitt" };
-            
+            let section_word = if lang_ref == "en" {
+                "section"
+            } else {
+                "Abschnitt"
+            };
+
             for (phase_idx, phase) in phases.iter().enumerate() {
                 // Progress-Event mit Phase-Info
                 let _ = app_handle.emit_all("world_scan_progress", json!({
@@ -1007,37 +1192,45 @@ async fn extract_entities_ai(req: ExtractEntitiesRequest, app: tauri::AppHandle)
                     "total_phases": total_phases,
                     "progress_percent": ((phase_idx as f32) / (total_phases as f32) * 100.0) as u32
                 }));
-                
+
                 // Legacy progress event für Kompatibilität
-                let _ = app_handle.emit_all("entity_extraction_progress", json!({
-                    "job_id": job_id_for_task,
-                    "current_chunk": phase_idx + 1,
-                    "total_chunks": total_phases,
-                    "section_word": section_word
-                }));
-                
+                let _ = app_handle.emit_all(
+                    "entity_extraction_progress",
+                    json!({
+                        "job_id": job_id_for_task,
+                        "current_chunk": phase_idx + 1,
+                        "total_chunks": total_phases,
+                        "section_word": section_word
+                    }),
+                );
+
                 let entity_type = phase.entity_type().unwrap_or("character");
-                
+
                 // Scanne jeden Chunk für diese Kategorie
                 for chunk in &chunks {
                     let prompt = build_discovery_prompt(chunk, *phase, &lang_ref);
                     if prompt.is_empty() {
                         continue;
                     }
-                    
+
                     // Discovery braucht weniger Tokens (nur Namen-Liste)
                     let tokens = generate_tokens_for_prompt(&prompt, 500);
                     let response = tokens.join("");
-                    
+
                     let discovered = parse_discovery_response(&response, entity_type);
-                    log::info!("[entity_discovery] Phase {:?}: found {} entities in {}", phase, discovered.len(), section_word);
+                    log::info!(
+                        "[entity_discovery] Phase {:?}: found {} entities in {}",
+                        phase,
+                        discovered.len(),
+                        section_word
+                    );
                     for d in &discovered {
                         log::debug!("[entity_discovery]   - {}", d.name);
                     }
                     all_discovered.extend(discovered);
                 }
             }
-            
+
             // Dedupliziere nach Namen (case-insensitive)
             let mut seen = std::collections::HashSet::new();
             all_discovered.retain(|e| {
@@ -1049,29 +1242,38 @@ async fn extract_entities_ai(req: ExtractEntitiesRequest, app: tauri::AppHandle)
                     true
                 }
             });
-            
-            log::info!("[entity_discovery] Total unique discovered: {}", all_discovered.len());
-            
+
+            log::info!(
+                "[entity_discovery] Total unique discovered: {}",
+                all_discovered.len()
+            );
+
             // ================================================================
             // PASS 2: Details + Validation
             // ================================================================
-            let _ = app_handle.emit_all("world_scan_progress", json!({
-                "job_id": job_id_for_task,
-                "phase": ScanPhase::Details.display_name(),
-                "phase_num": total_phases,
-                "total_phases": total_phases,
-                "progress_percent": 90
-            }));
-            
-            let _ = app_handle.emit_all("entity_extraction_progress", json!({
-                "job_id": job_id_for_task,
-                "current_chunk": total_phases,
-                "total_chunks": total_phases,
-                "section_word": section_word
-            }));
-            
+            let _ = app_handle.emit_all(
+                "world_scan_progress",
+                json!({
+                    "job_id": job_id_for_task,
+                    "phase": ScanPhase::Details.display_name(),
+                    "phase_num": total_phases,
+                    "total_phases": total_phases,
+                    "progress_percent": 90
+                }),
+            );
+
+            let _ = app_handle.emit_all(
+                "entity_extraction_progress",
+                json!({
+                    "job_id": job_id_for_task,
+                    "current_chunk": total_phases,
+                    "total_chunks": total_phases,
+                    "section_word": section_word
+                }),
+            );
+
             let mut final_entities: Vec<ExtractedEntity> = Vec::new();
-            
+
             if !all_discovered.is_empty() {
                 // Kleinere Batches für stabileres JSON-Parsing
                 const BATCH_SIZE: usize = 4;
@@ -1080,17 +1282,25 @@ async fn extract_entities_ai(req: ExtractEntitiesRequest, app: tauri::AppHandle)
                     let context_text = if chunks.len() == 1 {
                         chunks[0].clone()
                     } else {
-                        chunks.iter().take(2).cloned().collect::<Vec<_>>().join("\n\n")
+                        chunks
+                            .iter()
+                            .take(2)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join("\n\n")
                     };
-                    
+
                     let prompt = build_detail_prompt(&context_text, batch, &lang_ref);
                     // Mehr Tokens für vollständiges JSON (4 Entities × ~150 Tokens = ~600, plus Buffer)
                     let tokens = generate_tokens_for_prompt(&prompt, 800);
                     let response = tokens.join("");
-                    
+
                     match parse_extraction_response(&response) {
                         Ok(entities) => {
-                            log::info!("[entity_details] Batch: got {} detailed glossary entries", entities.len());
+                            log::info!(
+                                "[entity_details] Batch: got {} detailed glossary entries",
+                                entities.len()
+                            );
                             final_entities.extend(entities);
                         }
                         Err(e) => {
@@ -1111,46 +1321,66 @@ async fn extract_entities_ai(req: ExtractEntitiesRequest, app: tauri::AppHandle)
                     }
                 }
             }
-            
+
             // Merge & Dedupe
             let merged = merge_entities(vec![final_entities]);
-            log::info!("[entity_extraction] Total merged entities: {}", merged.len());
-            
+            log::info!(
+                "[entity_extraction] Total merged entities: {}",
+                merged.len()
+            );
+
             // === HALLUZINATIONS-FILTER ===
             let validated = validate_entities_against_text(merged, &original_text_ref);
-            log::info!("[entity_extraction] After text validation: {} entities", validated.len());
-            
+            log::info!(
+                "[entity_extraction] After text validation: {} entities",
+                validated.len()
+            );
+
             // === SPITZNAMEN-EXTRAKTION ===
             // Extrahiere Spitznamen wie "Caitlin 'Caite' Keane" → Caite als Alias
             let with_nicknames = extract_nicknames_from_text(validated, &original_text_ref);
-            
+
             for e in &with_nicknames {
-                log::info!("[entity_extraction]   FINAL: {} ({}) aliases: {:?} | desc: '{}'", 
-                    e.name, e.entity_type, e.aliases, e.description);
+                log::info!(
+                    "[entity_extraction]   FINAL: {} ({}) aliases: {:?} | desc: '{}'",
+                    e.name,
+                    e.entity_type,
+                    e.aliases,
+                    e.description
+                );
             }
 
             // Fertig-Events
-            let _ = app_handle.emit_all("world_scan_progress", json!({
-                "job_id": job_id_for_task,
-                "phase": ScanPhase::Done.display_name(),
-                "phase_num": total_phases + 1,
-                "total_phases": total_phases,
-                "progress_percent": 100,
-                "entities_found": with_nicknames.len()
-            }));
-            
-            let _ = app_handle.emit_all("entity_extraction_done", json!({
-                "job_id": job_id_for_task,
-                "entities": with_nicknames
-            }));
+            let _ = app_handle.emit_all(
+                "world_scan_progress",
+                json!({
+                    "job_id": job_id_for_task,
+                    "phase": ScanPhase::Done.display_name(),
+                    "phase_num": total_phases + 1,
+                    "total_phases": total_phases,
+                    "progress_percent": 100,
+                    "entities_found": with_nicknames.len()
+                }),
+            );
+
+            let _ = app_handle.emit_all(
+                "entity_extraction_done",
+                json!({
+                    "job_id": job_id_for_task,
+                    "entities": with_nicknames
+                }),
+            );
         }));
-        
+
         if let Err(e) = result {
             log::error!("[entity_extraction] Task panicked: {:?}", e);
-            let _ = app_handle.emit_all("entity_extraction_error", json!({
-                "job_id": job_id_for_task,
-                "error": format!("Internal error: {:?}", e)
-            }));
+            let _ = app_handle.emit_all(
+                "entity_extraction_error",
+                json!({
+                    "job_id": job_id_for_task,
+                    "error": format!("Internal error: {:?}", e)
+                }),
+            );
         }
     });
 
@@ -1167,7 +1397,10 @@ struct ExtractEntitiesUpsertRequest {
     scene_id: Option<String>,
 }
 
-fn resolve_type_map(conn: &Connection, names: &[String]) -> Result<std::collections::HashMap<String, String>, String> {
+fn resolve_type_map(
+    conn: &Connection,
+    names: &[String],
+) -> Result<std::collections::HashMap<String, String>, String> {
     let mut map = std::collections::HashMap::new();
     let types = database::list_entity_types(conn).map_err(|e| e.to_string())?;
     for t in types {
@@ -1200,7 +1433,11 @@ fn upsert_extracted_entities(
                 None,
                 "{}",
             ) {
-                if was_updated { updated_count += 1; } else { new_count += 1; }
+                if was_updated {
+                    updated_count += 1;
+                } else {
+                    new_count += 1;
+                }
             }
         }
     }
@@ -1215,7 +1452,9 @@ async fn extract_entities_scene_upsert(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    use ai::entity_extraction::{build_extraction_prompt, merge_entities, parse_extraction_response, split_into_chunks};
+    use ai::entity_extraction::{
+        build_extraction_prompt, merge_entities, parse_extraction_response, split_into_chunks,
+    };
     use ai::generate_tokens_for_prompt;
     use serde_json::json;
     use uuid::Uuid;
@@ -1239,13 +1478,19 @@ async fn extract_entities_scene_upsert(
         let mut error_chunks = 0;
 
         for (idx, chunk) in chunks.into_iter().enumerate() {
-            let _ = app_handle.emit_all("entity_upsert_progress", json!({
-                "job_id": job_id_clone,
-                "current_chunk": idx + 1,
-                "total_chunks": total
-            }));
+            let _ = app_handle.emit_all(
+                "entity_upsert_progress",
+                json!({
+                    "job_id": job_id_clone,
+                    "current_chunk": idx + 1,
+                    "total_chunks": total
+                }),
+            );
 
-            let prompt = build_extraction_prompt(&chunk, &type_names.iter().map(|s| s.as_str()).collect::<Vec<&str>>());
+            let prompt = build_extraction_prompt(
+                &chunk,
+                &type_names.iter().map(|s| s.as_str()).collect::<Vec<&str>>(),
+            );
             let tokens = generate_tokens_for_prompt(&prompt, 2200);
             let response = tokens.join(" ");
 
@@ -1253,11 +1498,14 @@ async fn extract_entities_scene_upsert(
                 Ok(ents) => all_entities.push(ents),
                 Err(e) => {
                     error_chunks += 1;
-                    let _ = app_handle.emit_all("entity_upsert_error", json!({
-                        "job_id": job_id_clone,
-                        "error": e,
-                        "chunk": idx + 1
-                    }));
+                    let _ = app_handle.emit_all(
+                        "entity_upsert_error",
+                        json!({
+                            "job_id": job_id_clone,
+                            "error": e,
+                            "chunk": idx + 1
+                        }),
+                    );
                 }
             }
         }
@@ -1265,13 +1513,16 @@ async fn extract_entities_scene_upsert(
         let merged = merge_entities(all_entities);
         let (new_count, updated_count) = upsert_extracted_entities(&conn, &merged, &type_map);
 
-        let _ = app_handle.emit_all("entity_upsert_done", json!({
-            "job_id": job_id_clone,
-            "new": new_count,
-            "updated": updated_count,
-            "errors": error_chunks,
-            "entities": merged
-        }));
+        let _ = app_handle.emit_all(
+            "entity_upsert_done",
+            json!({
+                "job_id": job_id_clone,
+                "new": new_count,
+                "updated": updated_count,
+                "errors": error_chunks,
+                "entities": merged
+            }),
+        );
 
         Ok::<(), String>(())
     });
@@ -1285,7 +1536,9 @@ async fn extract_entities_manuscript_upsert(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    use ai::entity_extraction::{build_extraction_prompt, merge_entities, parse_extraction_response, split_into_chunks};
+    use ai::entity_extraction::{
+        build_extraction_prompt, merge_entities, parse_extraction_response, split_into_chunks,
+    };
     use ai::generate_tokens_for_prompt;
     use serde_json::json;
     use uuid::Uuid;
@@ -1294,15 +1547,25 @@ async fn extract_entities_manuscript_upsert(
         let db_lock = state.db.lock().map_err(|e| e.to_string())?;
         let conn = db_lock.as_ref().ok_or("Database not open")?;
 
-        let path = state.db_path.lock().map_err(|e| e.to_string())?.clone().ok_or("No database path")?;
+        let path = state
+            .db_path
+            .lock()
+            .map_err(|e| e.to_string())?
+            .clone()
+            .ok_or("No database path")?;
 
         // scenes: (title, content)
         let mut stmt = conn.prepare(
             "SELECT s.title, s.content FROM scenes s \n             JOIN chapters c ON s.chapter_id = c.id \n             ORDER BY c.order_num, s.order_num"
         ).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?.unwrap_or_default()))
-        }).map_err(|e| e.to_string())?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                ))
+            })
+            .map_err(|e| e.to_string())?;
         let scenes: Vec<(String, String)> = rows.filter_map(|r| r.ok()).collect();
 
         // entity types names
@@ -1332,15 +1595,24 @@ async fn extract_entities_manuscript_upsert(
             let chunks = split_into_chunks(&content);
             let total_chunks = chunks.len();
             for (cidx, chunk) in chunks.into_iter().enumerate() {
-                let _ = app_handle.emit_all("entity_upsert_progress", json!({
-                    "job_id": job_id_clone,
-                    "scene": scene_idx + 1,
-                    "total_scenes": total_scenes,
-                    "current_chunk": cidx + 1,
-                    "total_chunks": total_chunks
-                }));
+                let _ = app_handle.emit_all(
+                    "entity_upsert_progress",
+                    json!({
+                        "job_id": job_id_clone,
+                        "scene": scene_idx + 1,
+                        "total_scenes": total_scenes,
+                        "current_chunk": cidx + 1,
+                        "total_chunks": total_chunks
+                    }),
+                );
 
-                let prompt = build_extraction_prompt(&chunk, &entity_types.iter().map(|s| s.as_str()).collect::<Vec<&str>>());
+                let prompt = build_extraction_prompt(
+                    &chunk,
+                    &entity_types
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<&str>>(),
+                );
                 let tokens = generate_tokens_for_prompt(&prompt, 2200);
                 let response = tokens.join(" ");
 
@@ -1354,23 +1626,29 @@ async fn extract_entities_manuscript_upsert(
                     }
                     Err(e) => {
                         error_chunks += 1;
-                        let _ = app_handle.emit_all("entity_upsert_error", json!({
-                            "job_id": job_id_clone,
-                            "error": e,
-                            "scene": scene_idx + 1,
-                            "chunk": cidx + 1
-                        }));
+                        let _ = app_handle.emit_all(
+                            "entity_upsert_error",
+                            json!({
+                                "job_id": job_id_clone,
+                                "error": e,
+                                "scene": scene_idx + 1,
+                                "chunk": cidx + 1
+                            }),
+                        );
                     }
                 }
             }
         }
 
-        let _ = app_handle.emit_all("entity_upsert_done", json!({
-            "job_id": job_id_clone,
-            "new": new_count,
-            "updated": updated_count,
-            "errors": error_chunks
-        }));
+        let _ = app_handle.emit_all(
+            "entity_upsert_done",
+            json!({
+                "job_id": job_id_clone,
+                "new": new_count,
+                "updated": updated_count,
+                "errors": error_chunks
+            }),
+        );
 
         Ok::<(), String>(())
     });
@@ -1395,19 +1673,27 @@ struct AnalyzeLektoratRequest {
 
 /// Lektorat-Analyse mit KI
 #[tauri::command]
-async fn analyze_lektorat_ai(req: AnalyzeLektoratRequest, app: tauri::AppHandle) -> Result<String, String> {
+async fn analyze_lektorat_ai(
+    req: AnalyzeLektoratRequest,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
     use ai::entity_extraction::build_lektorat_prompt;
-    
+
     let prompt = build_lektorat_prompt(&req.text, &req.lang, req.include_grammar);
-    
+
     // Starte AI Session - Ergebnisse kommen via Events
     stream::start_session(&app, prompt)
 }
 
 /// Chunked Lektorat (für sehr lange Szenen) mit Fortschritts-Events
 #[tauri::command]
-async fn analyze_lektorat_chunked(req: AnalyzeLektoratRequest, app: tauri::AppHandle) -> Result<String, String> {
-    use ai::entity_extraction::{build_lektorat_prompt, parse_lektorat_response, split_into_chunks, LektoratNote};
+async fn analyze_lektorat_chunked(
+    req: AnalyzeLektoratRequest,
+    app: tauri::AppHandle,
+) -> Result<String, String> {
+    use ai::entity_extraction::{
+        build_lektorat_prompt, parse_lektorat_response, split_into_chunks, LektoratNote,
+    };
     use ai::generate_tokens_for_prompt;
     use serde_json::json;
     use uuid::Uuid;
@@ -1419,7 +1705,7 @@ async fn analyze_lektorat_chunked(req: AnalyzeLektoratRequest, app: tauri::AppHa
     let app_handle = app.clone();
     let lang = req.lang.clone();
     let include_grammar = req.include_grammar;
-    
+
     // Wording je nach Sprache
     let section_word = if lang == "en" { "section" } else { "Abschnitt" };
 
@@ -1427,12 +1713,15 @@ async fn analyze_lektorat_chunked(req: AnalyzeLektoratRequest, app: tauri::AppHa
         let mut all_notes: Vec<LektoratNote> = Vec::new();
 
         for (idx, chunk) in chunks.into_iter().enumerate() {
-            let _ = app_handle.emit_all("lektorat_progress", json!({
-                "job_id": job_id_for_task,
-                "current_chunk": idx + 1,
-                "total_chunks": total,
-                "section_word": section_word
-            }));
+            let _ = app_handle.emit_all(
+                "lektorat_progress",
+                json!({
+                    "job_id": job_id_for_task,
+                    "current_chunk": idx + 1,
+                    "total_chunks": total,
+                    "section_word": section_word
+                }),
+            );
 
             let prompt = build_lektorat_prompt(&chunk, &lang, include_grammar);
             // Lektorat braucht mehr Tokens als Entity-Extraktion:
@@ -1446,11 +1735,14 @@ async fn analyze_lektorat_chunked(req: AnalyzeLektoratRequest, app: tauri::AppHa
                     all_notes.append(&mut notes);
                 }
                 Err(e) => {
-                    let _ = app_handle.emit_all("lektorat_error", json!({
-                        "job_id": job_id_for_task,
-                        "error": e,
-                        "section": idx + 1
-                    }));
+                    let _ = app_handle.emit_all(
+                        "lektorat_error",
+                        json!({
+                            "job_id": job_id_for_task,
+                            "error": e,
+                            "section": idx + 1
+                        }),
+                    );
                 }
             }
         }
@@ -1460,17 +1752,23 @@ async fn analyze_lektorat_chunked(req: AnalyzeLektoratRequest, app: tauri::AppHa
         let mut deduped: Vec<LektoratNote> = Vec::new();
         for note in all_notes.into_iter() {
             if let Some(last) = deduped.last() {
-                if last.line == note.line && last.note_type == note.note_type && last.message == note.message {
+                if last.line == note.line
+                    && last.note_type == note.note_type
+                    && last.message == note.message
+                {
                     continue;
                 }
             }
             deduped.push(note);
         }
 
-        let _ = app_handle.emit_all("lektorat_done", json!({
-            "job_id": job_id_for_task,
-            "notes": deduped
-        }));
+        let _ = app_handle.emit_all(
+            "lektorat_done",
+            json!({
+                "job_id": job_id_for_task,
+                "notes": deduped
+            }),
+        );
     });
 
     Ok(job_id)
@@ -1489,45 +1787,57 @@ struct AutoSummarizeSceneRequest {
 
 /// Auto-summarize a scene in the background (no streaming, direct DB write)
 #[tauri::command]
-async fn auto_summarize_scene(req: AutoSummarizeSceneRequest, state: State<'_, AppState>) -> Result<String, String> {
+async fn auto_summarize_scene(
+    req: AutoSummarizeSceneRequest,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
     use ai::entity_extraction::{build_scene_summary_prompt, parse_summary_response};
-    
+
     // Get scene content from DB
     let (scene_title, scene_content) = {
         let db_lock = state.db.lock().map_err(|e| e.to_string())?;
         let conn = db_lock.as_ref().ok_or("Database not open")?;
-        
+
         // Get scene title and content
-        let mut stmt = conn.prepare("SELECT title, content FROM scenes WHERE id = ?1")
+        let mut stmt = conn
+            .prepare("SELECT title, content FROM scenes WHERE id = ?1")
             .map_err(|e| e.to_string())?;
-        let result: (String, String) = stmt.query_row([&req.scene_id], |row| {
-            Ok((row.get(0)?, row.get::<_, Option<String>>(1)?.unwrap_or_default()))
-        }).map_err(|e| format!("Scene not found: {}", e))?;
+        let result: (String, String) = stmt
+            .query_row([&req.scene_id], |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                ))
+            })
+            .map_err(|e| format!("Scene not found: {}", e))?;
         result
     };
-    
+
     // Skip if content is empty or too short
     if scene_content.trim().len() < 50 {
         return Ok("Szene zu kurz für Zusammenfassung".to_string());
     }
-    
+
     // Build prompt
     let prompt = build_scene_summary_prompt(&scene_title, &scene_content);
-    
+
     // Generate summary synchronously (no streaming)
     let tokens = ai::generate_tokens_for_prompt(&prompt, 200);
     let response = tokens.join(" ");
     let summary = parse_summary_response(&response);
-    
+
     // Write summary to DB
     {
         let db_lock = state.db.lock().map_err(|e| e.to_string())?;
         let conn = db_lock.as_ref().ok_or("Database not open")?;
-        database::update_scene_summary(conn, &req.scene_id, &summary)
-            .map_err(|e| e.to_string())?;
+        database::update_scene_summary(conn, &req.scene_id, &summary).map_err(|e| e.to_string())?;
     }
-    
-    log::info!("[auto-summarize] Scene {} summarized: {}", req.scene_id, summary);
+
+    log::info!(
+        "[auto-summarize] Scene {} summarized: {}",
+        req.scene_id,
+        summary
+    );
     Ok(summary)
 }
 
@@ -1540,45 +1850,51 @@ struct AutoSummarizeChapterRequest {
 
 /// Auto-summarize a chapter based on its scene summaries
 #[tauri::command]
-async fn auto_summarize_chapter(req: AutoSummarizeChapterRequest, state: State<'_, AppState>) -> Result<String, String> {
+async fn auto_summarize_chapter(
+    req: AutoSummarizeChapterRequest,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
     use ai::entity_extraction::{build_chapter_summary_prompt, parse_summary_response};
-    
+
     // Get chapter title and scene summaries
     let (chapter_title, scene_data) = {
         let db_lock = state.db.lock().map_err(|e| e.to_string())?;
         let conn = db_lock.as_ref().ok_or("Database not open")?;
-        
+
         // Get chapter title
-        let title: String = conn.query_row(
-            "SELECT title FROM chapters WHERE id = ?1",
-            [&req.chapter_id],
-            |row| row.get(0)
-        ).map_err(|e| format!("Chapter not found: {}", e))?;
-        
+        let title: String = conn
+            .query_row(
+                "SELECT title FROM chapters WHERE id = ?1",
+                [&req.chapter_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| format!("Chapter not found: {}", e))?;
+
         // Get scene summaries
         let summaries = database::get_chapter_scene_summaries(conn, &req.chapter_id)
             .map_err(|e| e.to_string())?;
-        
-        let data: Vec<(String, Option<String>)> = summaries.into_iter()
+
+        let data: Vec<(String, Option<String>)> = summaries
+            .into_iter()
             .map(|(_, title, summary)| (title, summary))
             .collect();
-        
+
         (title, data)
     };
-    
+
     // Skip if no scenes
     if scene_data.is_empty() {
         return Ok("Keine Szenen im Kapitel".to_string());
     }
-    
+
     // Build prompt
     let prompt = build_chapter_summary_prompt(&chapter_title, &scene_data);
-    
+
     // Generate summary
     let tokens = ai::generate_tokens_for_prompt(&prompt, 250);
     let response = tokens.join(" ");
     let summary = parse_summary_response(&response);
-    
+
     // Write to DB
     {
         let db_lock = state.db.lock().map_err(|e| e.to_string())?;
@@ -1586,8 +1902,12 @@ async fn auto_summarize_chapter(req: AutoSummarizeChapterRequest, state: State<'
         database::update_chapter_summary(conn, &req.chapter_id, &summary)
             .map_err(|e| e.to_string())?;
     }
-    
-    log::info!("[auto-summarize] Chapter {} summarized: {}", req.chapter_id, summary);
+
+    log::info!(
+        "[auto-summarize] Chapter {} summarized: {}",
+        req.chapter_id,
+        summary
+    );
     Ok(summary)
 }
 
@@ -1601,7 +1921,10 @@ fn get_scene_summary(scene_id: String, state: State<AppState>) -> Result<Option<
 
 /// Get chapter summary
 #[tauri::command]
-fn get_chapter_summary(chapter_id: String, state: State<AppState>) -> Result<Option<String>, String> {
+fn get_chapter_summary(
+    chapter_id: String,
+    state: State<AppState>,
+) -> Result<Option<String>, String> {
     let db_lock = state.db.lock().map_err(|e| e.to_string())?;
     let conn = db_lock.as_ref().ok_or("Database not open")?;
     database::get_chapter_summary(conn, &chapter_id).map_err(|e| e.to_string())
@@ -1609,7 +1932,9 @@ fn get_chapter_summary(chapter_id: String, state: State<AppState>) -> Result<Opt
 
 /// Get all chapter summaries for AI context
 #[tauri::command]
-fn get_all_chapter_summaries(state: State<AppState>) -> Result<Vec<(String, String, Option<String>)>, String> {
+fn get_all_chapter_summaries(
+    state: State<AppState>,
+) -> Result<Vec<(String, String, Option<String>)>, String> {
     let db_lock = state.db.lock().map_err(|e| e.to_string())?;
     let conn = db_lock.as_ref().ok_or("Database not open")?;
     database::get_all_chapter_summaries(conn).map_err(|e| e.to_string())
@@ -1657,63 +1982,76 @@ async fn start_entity_scan(
     entity_types: Vec<String>,
     state: State<'_, AppState>,
 ) -> Result<String, String> {
-    use uuid::Uuid;
-    use ai::queue::{Priority, enqueue};
     use ai::entity_extraction::build_extraction_prompt;
-    
+    use ai::queue::{enqueue, Priority};
+    use uuid::Uuid;
+
     // Fetch all scenes synchronously first
     let scenes: Vec<SceneData> = {
         let db_lock = state.db.lock().map_err(|e| e.to_string())?;
         let conn = db_lock.as_ref().ok_or("Database not open")?;
-        
-        let mut stmt = conn.prepare(
-            "SELECT s.id, s.title, s.content FROM scenes s 
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT s.id, s.title, s.content FROM scenes s 
              JOIN chapters c ON s.chapter_id = c.id 
-             ORDER BY c.order_num, s.order_num"
-        ).map_err(|e| e.to_string())?;
-        
-        let rows = stmt.query_map([], |row| {
-            Ok(SceneData {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                content: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+             ORDER BY c.order_num, s.order_num",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(SceneData {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    content: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                })
             })
-        }).map_err(|e| e.to_string())?;
-        
+            .map_err(|e| e.to_string())?;
+
         rows.filter_map(|r| r.ok()).collect()
     };
-    
+
     let total = scenes.len();
     if total == 0 {
         return Ok("no_scenes".to_string());
     }
-    
+
     let job_id = Uuid::new_v4().to_string();
     let entity_types_clone = entity_types.clone();
-    
+
     // Spawn background task
     tokio::spawn(async move {
         log::info!("[bg-job] EntityScan gestartet: {} Szenen", total);
-        
+
         for (idx, scene) in scenes.iter().enumerate() {
             // Skip short scenes
             if scene.content.trim().len() < 50 {
                 continue;
             }
-            
-            log::debug!("[bg-job] Processing scene {}/{}: {}", idx + 1, total, scene.title);
-            
+
+            log::debug!(
+                "[bg-job] Processing scene {}/{}: {}",
+                idx + 1,
+                total,
+                scene.title
+            );
+
             // Build prompt
             let type_refs: Vec<&str> = entity_types_clone.iter().map(|s| s.as_str()).collect();
             let prompt = build_extraction_prompt(&scene.content, &type_refs);
-            
+
             // Enqueue request
             let (_req_id, rx) = enqueue(prompt, 512, Priority::Background, "entity_scan");
-            
+
             // Wait for result
             match tokio::time::timeout(tokio::time::Duration::from_secs(120), rx).await {
                 Ok(Ok(Ok(response))) => {
-                    log::debug!("[bg-job] Szene {} verarbeitet: {} chars", scene.title, response.len());
+                    log::debug!(
+                        "[bg-job] Szene {} verarbeitet: {} chars",
+                        scene.title,
+                        response.len()
+                    );
                     // Entity-Parsing erfolgt interaktiv via EntitiesPanel im Frontend
                 }
                 Ok(Ok(Err(e))) => {
@@ -1727,62 +2065,64 @@ async fn start_entity_scan(
                 }
             }
         }
-        
+
         log::info!("[bg-job] EntityScan abgeschlossen");
     });
-    
+
     Ok(job_id)
 }
 
 /// Start summarization of all scenes without summaries
 #[tauri::command]
-async fn start_summarize_all_scenes(
-    state: State<'_, AppState>,
-) -> Result<String, String> {
-    use uuid::Uuid;
-    use ai::queue::{Priority, enqueue};
+async fn start_summarize_all_scenes(state: State<'_, AppState>) -> Result<String, String> {
     use ai::entity_extraction::{build_scene_summary_prompt, parse_summary_response};
-    
+    use ai::queue::{enqueue, Priority};
+    use uuid::Uuid;
+
     // Get DB path for later reconnection
     let db_path = {
         let path_lock = state.db_path.lock().map_err(|e| e.to_string())?;
         path_lock.clone().ok_or("No database path")?
     };
-    
+
     // Fetch scenes without summaries
     let scenes: Vec<SceneData> = {
         let db_lock = state.db.lock().map_err(|e| e.to_string())?;
         let conn = db_lock.as_ref().ok_or("Database not open")?;
-        
-        let mut stmt = conn.prepare(
-            "SELECT s.id, s.title, s.content FROM scenes s 
+
+        let mut stmt = conn
+            .prepare(
+                "SELECT s.id, s.title, s.content FROM scenes s 
              JOIN chapters c ON s.chapter_id = c.id 
              WHERE s.summary IS NULL OR s.summary = ''
-             ORDER BY c.order_num, s.order_num"
-        ).map_err(|e| e.to_string())?;
-        
-        let rows = stmt.query_map([], |row| {
-            Ok(SceneData {
-                id: row.get(0)?,
-                title: row.get(1)?,
-                content: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+             ORDER BY c.order_num, s.order_num",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(SceneData {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    content: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                })
             })
-        }).map_err(|e| e.to_string())?;
-        
+            .map_err(|e| e.to_string())?;
+
         rows.filter_map(|r| r.ok()).collect()
     };
-    
+
     let total = scenes.len();
     if total == 0 {
         return Ok("no_scenes_to_summarize".to_string());
     }
-    
+
     let job_id = Uuid::new_v4().to_string();
-    
+
     // Spawn background task
     tokio::spawn(async move {
         log::info!("[bg-job] SummarizeScenes gestartet: {} Szenen", total);
-        
+
         // Open new DB connection for writes
         let write_conn = match rusqlite::Connection::open(&db_path) {
             Ok(c) => c,
@@ -1791,21 +2131,26 @@ async fn start_summarize_all_scenes(
                 return;
             }
         };
-        
+
         for (idx, scene) in scenes.iter().enumerate() {
             if scene.content.trim().len() < 50 {
                 continue;
             }
-            
-            log::debug!("[bg-job] Summarizing {}/{}: {}", idx + 1, total, scene.title);
-            
+
+            log::debug!(
+                "[bg-job] Summarizing {}/{}: {}",
+                idx + 1,
+                total,
+                scene.title
+            );
+
             let prompt = build_scene_summary_prompt(&scene.title, &scene.content);
             let (_req_id, rx) = enqueue(prompt, 200, Priority::Background, "summarize_scene");
-            
+
             match tokio::time::timeout(tokio::time::Duration::from_secs(60), rx).await {
                 Ok(Ok(Ok(response))) => {
                     let summary = parse_summary_response(&response);
-                    
+
                     if let Err(e) = write_conn.execute(
                         "UPDATE scenes SET summary = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
                         rusqlite::params![summary, scene.id]
@@ -1820,10 +2165,10 @@ async fn start_summarize_all_scenes(
                 Err(_) => log::warn!("[bg-job] Timeout für {}", scene.title),
             }
         }
-        
+
         log::info!("[bg-job] SummarizeScenes abgeschlossen: {} Szenen", total);
     });
-    
+
     Ok(job_id)
 }
 
@@ -1831,7 +2176,7 @@ async fn start_summarize_all_scenes(
 // Support & Bug Reports
 // ─────────────────────────────────────────────────────────────────────────────
 
-use featherworks_author::support::{self, ReportCategory, SystemInfo, AppStateSnapshot};
+use featherworks_author::support::{self, AppStateSnapshot, ReportCategory, SystemInfo};
 
 /// Request für Bug Report
 #[derive(serde::Deserialize)]
@@ -1847,7 +2192,7 @@ struct SubmitBugReportRequest {
 /// Sende einen Bug Report
 #[tauri::command]
 async fn submit_bug_report(
-    req: SubmitBugReportRequest, 
+    req: SubmitBugReportRequest,
     state: State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<String, String> {
@@ -1860,26 +2205,32 @@ async fn submit_bug_report(
         "ai" => ReportCategory::Ai,
         _ => ReportCategory::Other,
     };
-    
+
     // Sammle App-State
     let app_state_snapshot = {
         let db_lock = state.db.lock().ok();
         let path_lock = state.db_path.lock().ok();
-        
+
         let project_open = db_lock.as_ref().and_then(|d| d.as_ref()).is_some();
-        let project_path_hash = path_lock.as_ref()
+        let project_path_hash = path_lock
+            .as_ref()
             .and_then(|p| p.as_ref())
             .map(|p| support::hash_path(p));
-        
+
         // Zähle Kapitel/Szenen falls Projekt offen
-        let (chapter_count, scene_count) = if let Some(Some(conn)) = db_lock.as_ref().map(|d| d.as_ref()) {
-            let chapters: i64 = conn.query_row("SELECT COUNT(*) FROM chapters", [], |r| r.get(0)).unwrap_or(0);
-            let scenes: i64 = conn.query_row("SELECT COUNT(*) FROM scenes", [], |r| r.get(0)).unwrap_or(0);
-            (Some(chapters as usize), Some(scenes as usize))
-        } else {
-            (None, None)
-        };
-        
+        let (chapter_count, scene_count) =
+            if let Some(Some(conn)) = db_lock.as_ref().map(|d| d.as_ref()) {
+                let chapters: i64 = conn
+                    .query_row("SELECT COUNT(*) FROM chapters", [], |r| r.get(0))
+                    .unwrap_or(0);
+                let scenes: i64 = conn
+                    .query_row("SELECT COUNT(*) FROM scenes", [], |r| r.get(0))
+                    .unwrap_or(0);
+                (Some(chapters as usize), Some(scenes as usize))
+            } else {
+                (None, None)
+            };
+
         AppStateSnapshot {
             project_open,
             project_path_hash,
@@ -1890,13 +2241,13 @@ async fn submit_bug_report(
             last_error: None,
         }
     };
-    
+
     // Log-Verzeichnis
     let log_dir = app.path_resolver().app_log_dir();
-    
+
     // App-Version
     let app_version = app.package_info().version.to_string();
-    
+
     // Erstelle Report
     let report = support::create_report(
         category,
@@ -1908,12 +2259,12 @@ async fn submit_bug_report(
         Some(app_state_snapshot),
         &app_version,
     );
-    
+
     let report_id = report.id.clone();
-    
+
     // Webhook-URL aus Umgebungsvariable (FEATHERWORKS_WEBHOOK_URL)
     let webhook_url = std::env::var("FEATHERWORKS_WEBHOOK_URL").ok();
-    
+
     if let Some(url) = webhook_url {
         match support::send_report_webhook(&report, &url).await {
             Ok(()) => {
@@ -1925,7 +2276,7 @@ async fn submit_bug_report(
             }
         }
     }
-    
+
     // Fallback: Lokal speichern
     if let Some(app_data_dir) = app.path_resolver().app_data_dir() {
         match support::save_report_locally(&report, app_data_dir) {
@@ -1933,7 +2284,7 @@ async fn submit_bug_report(
                 log::info!("[support] Report gespeichert: {:?}", path);
                 Ok(report_id)
             }
-            Err(e) => Err(format!("Konnte Report nicht speichern: {}", e))
+            Err(e) => Err(format!("Konnte Report nicht speichern: {}", e)),
         }
     } else {
         Err("Kein App-Verzeichnis verfügbar".to_string())
@@ -1984,13 +2335,18 @@ struct LektoratAnnotationInput {
 }
 
 #[tauri::command]
-fn save_lektorat_annotations(req: SaveLektoratAnnotationsRequest, state: State<AppState>) -> Result<usize, String> {
+fn save_lektorat_annotations(
+    req: SaveLektoratAnnotationsRequest,
+    state: State<AppState>,
+) -> Result<usize, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    
+
     // Convert input to DB format
-    let annotations: Vec<database::LektoratAnnotation> = req.annotations.iter().map(|a| {
-        database::LektoratAnnotation {
+    let annotations: Vec<database::LektoratAnnotation> = req
+        .annotations
+        .iter()
+        .map(|a| database::LektoratAnnotation {
             id: a.id.clone(),
             scene_id: req.scene_id.clone(),
             line: a.line,
@@ -2005,21 +2361,23 @@ fn save_lektorat_annotations(req: SaveLektoratAnnotationsRequest, state: State<A
             status: "active".to_string(),
             created_at: chrono::Utc::now().to_rfc3339(),
             dismissed_at: None,
-        }
-    }).collect();
-    
+        })
+        .collect();
+
     database::save_lektorat_annotations(conn, &req.scene_id, &annotations)
         .map_err(|e| e.to_string())
 }
 
 /// Lade Lektorat-Annotationen für eine Szene
 #[tauri::command]
-fn load_lektorat_annotations(scene_id: String, state: State<AppState>) -> Result<Vec<database::LektoratAnnotation>, String> {
+fn load_lektorat_annotations(
+    scene_id: String,
+    state: State<AppState>,
+) -> Result<Vec<database::LektoratAnnotation>, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    
-    database::load_lektorat_annotations(conn, &scene_id)
-        .map_err(|e| e.to_string())
+
+    database::load_lektorat_annotations(conn, &scene_id).map_err(|e| e.to_string())
 }
 
 /// Dismissiere (erledigt/irrelevant) eine Annotation
@@ -2031,10 +2389,13 @@ struct DismissLektoratAnnotationRequest {
 }
 
 #[tauri::command]
-fn dismiss_lektorat_annotation(req: DismissLektoratAnnotationRequest, state: State<AppState>) -> Result<(), String> {
+fn dismiss_lektorat_annotation(
+    req: DismissLektoratAnnotationRequest,
+    state: State<AppState>,
+) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    
+
     database::dismiss_lektorat_annotation(conn, &req.annotation_id, &req.status)
         .map_err(|e| e.to_string())
 }
@@ -2044,9 +2405,8 @@ fn dismiss_lektorat_annotation(req: DismissLektoratAnnotationRequest, state: Sta
 fn clear_scene_lektorat(scene_id: String, state: State<AppState>) -> Result<usize, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    
-    database::clear_active_lektorat_annotations(conn, &scene_id)
-        .map_err(|e| e.to_string())
+
+    database::clear_active_lektorat_annotations(conn, &scene_id).map_err(|e| e.to_string())
 }
 
 /// Speichere extrahierte Entity in die Datenbank
@@ -2067,30 +2427,39 @@ struct SaveExtractedEntityResponse {
 }
 
 #[tauri::command]
-fn save_extracted_entity(req: SaveExtractedEntityRequest, state: State<AppState>) -> Result<SaveExtractedEntityResponse, String> {
+fn save_extracted_entity(
+    req: SaveExtractedEntityRequest,
+    state: State<AppState>,
+) -> Result<SaveExtractedEntityResponse, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    
+
     let aliases_str = req.aliases.join(", ");
-    
+
     // Use upsert to avoid duplicates - updates existing entities if found
     let (entity, was_updated) = database::upsert_entity(
-        conn, 
-        &req.type_id, 
-        &req.name, 
-        &aliases_str, 
-        &req.description, 
-        &req.notes, 
+        conn,
+        &req.type_id,
+        &req.name,
+        &aliases_str,
+        &req.description,
+        &req.notes,
         None, // color
-        "{}" // metadata_json
-    ).map_err(|e| e.to_string())?;
-    
-    Ok(SaveExtractedEntityResponse { entity, was_updated })
+        "{}", // metadata_json
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(SaveExtractedEntityResponse {
+        entity,
+        was_updated,
+    })
 }
 
 // --- AI Commands ---
 #[derive(serde::Deserialize)]
-struct StartAiChatRequest { prompt: String }
+struct StartAiChatRequest {
+    prompt: String,
+}
 
 #[tauri::command]
 async fn start_ai_chat(req: StartAiChatRequest, app: tauri::AppHandle) -> Result<String, String> {
@@ -2103,7 +2472,7 @@ struct AutoParagraphRequest {
     #[serde(rename = "sceneContent")]
     scene_content: String,
     #[serde(rename = "useHeuristic")]
-    use_heuristic: Option<bool>,  // Force heuristic mode (no AI)
+    use_heuristic: Option<bool>, // Force heuristic mode (no AI)
 }
 
 #[derive(serde::Serialize)]
@@ -2117,7 +2486,7 @@ struct AutoParagraphResult {
     success: bool,
     error: Option<String>,
     #[serde(rename = "usedHeuristic")]
-    used_heuristic: bool,  // Whether heuristic was used instead of AI
+    used_heuristic: bool, // Whether heuristic was used instead of AI
 }
 
 /// Check if the local AI model is available and ready
@@ -2130,7 +2499,7 @@ fn check_ai_available() -> bool {
 fn auto_paragraph_scene(req: AutoParagraphRequest) -> Result<AutoParagraphResult, String> {
     let original = req.scene_content.clone();
     let force_heuristic = req.use_heuristic.unwrap_or(false);
-    
+
     // Check if local LLM is ready (unless heuristic is forced)
     let ai_available = if force_heuristic {
         false
@@ -2138,15 +2507,19 @@ fn auto_paragraph_scene(req: AutoParagraphRequest) -> Result<AutoParagraphResult
         // Use the new function that checks the actual loader state
         ai::is_local_llm_ready()
     };
-    
-    log::info!("[auto-paragraph] force_heuristic={}, ai_available={}", force_heuristic, ai_available);
-    
+
+    log::info!(
+        "[auto-paragraph] force_heuristic={}, ai_available={}",
+        force_heuristic,
+        ai_available
+    );
+
     // Use heuristic if AI not available or forced
     if !ai_available {
         log::info!("[auto-paragraph] Using heuristic mode (AI not available or forced)");
         return Ok(auto_paragraph_heuristic(&original));
     }
-    
+
     // AI-based analysis
     log::info!("[auto-paragraph] Using AI mode");
     auto_paragraph_with_ai(&original)
@@ -2156,27 +2529,31 @@ fn auto_paragraph_scene(req: AutoParagraphRequest) -> Result<AutoParagraphResult
 fn auto_paragraph_heuristic(text: &str) -> AutoParagraphResult {
     // First, normalize existing paragraphs - preserve them but don't duplicate
     // Split by existing paragraph breaks (double newlines)
-    let existing_paragraphs: Vec<&str> = text.split("\n\n")
+    let existing_paragraphs: Vec<&str> = text
+        .split("\n\n")
         .map(|p| p.trim())
         .filter(|p| !p.is_empty())
         .collect();
-    
+
     // If there are already multiple paragraphs, analyze each one separately
     // to avoid creating double breaks
     let mut result_paragraphs: Vec<String> = Vec::new();
     let mut total_new_breaks = 0;
-    
+
     for para_text in &existing_paragraphs {
         let (processed, new_breaks) = process_paragraph_heuristic(para_text);
         result_paragraphs.push(processed);
         total_new_breaks += new_breaks;
     }
-    
+
     let suggested = result_paragraphs.join("\n\n");
-    
-    log::info!("[auto-paragraph/heuristic] Suggesting {} new paragraphs (existing: {})", 
-               total_new_breaks, existing_paragraphs.len().saturating_sub(1));
-    
+
+    log::info!(
+        "[auto-paragraph/heuristic] Suggesting {} new paragraphs (existing: {})",
+        total_new_breaks,
+        existing_paragraphs.len().saturating_sub(1)
+    );
+
     AutoParagraphResult {
         original_text: text.to_string(),
         suggested_text: suggested,
@@ -2190,46 +2567,64 @@ fn auto_paragraph_heuristic(text: &str) -> AutoParagraphResult {
 /// Process a single paragraph and return (processed text, number of new breaks)
 fn process_paragraph_heuristic(text: &str) -> (String, usize) {
     let mut paragraph_positions: Vec<usize> = Vec::new();
-    
+
     // Split into sentences
     let sentences: Vec<&str> = text
         .split_inclusive(|c| c == '.' || c == '!' || c == '?' || c == '"' || c == '»')
         .filter(|s| !s.trim().is_empty())
         .collect();
-    
+
     if sentences.is_empty() || sentences.len() < 2 {
         return (text.to_string(), 0);
     }
-    
+
     let mut chars_since_paragraph = 0;
     let mut last_was_dialogue = false;
-    
+
     for (i, sentence) in sentences.iter().enumerate() {
         let trimmed = sentence.trim();
         chars_since_paragraph += trimmed.len();
-        
+
         // Rule 1: Dialogue detection - new speaker likely means new paragraph
-        let is_dialogue_start = trimmed.starts_with('"') || 
-                                trimmed.starts_with('„') || 
-                                trimmed.starts_with('»') ||
-                                trimmed.starts_with("\"");
-        let is_dialogue_end = trimmed.ends_with('"') || 
-                              trimmed.ends_with('"') || 
-                              trimmed.ends_with('«');
-        
+        let is_dialogue_start = trimmed.starts_with('"')
+            || trimmed.starts_with('„')
+            || trimmed.starts_with('»')
+            || trimmed.starts_with("\"");
+        let is_dialogue_end =
+            trimmed.ends_with('"') || trimmed.ends_with('"') || trimmed.ends_with('«');
+
         // Rule 2: Speaker change in dialogue
         if is_dialogue_start && last_was_dialogue && i > 0 {
             paragraph_positions.push(i);
             chars_since_paragraph = trimmed.len();
         }
-        
+
         // Rule 3: Time/place markers at sentence start
         let time_place_markers = [
-            "später", "danach", "dann", "plötzlich", "währenddessen",
-            "am nächsten", "einige zeit", "stunden später", "tage später",
-            "draußen", "drinnen", "im", "in der", "in dem", "auf dem",
-            "zurück", "meanwhile", "later", "suddenly", "outside", "inside",
-            "the next", "hours later", "days later",
+            "später",
+            "danach",
+            "dann",
+            "plötzlich",
+            "währenddessen",
+            "am nächsten",
+            "einige zeit",
+            "stunden später",
+            "tage später",
+            "draußen",
+            "drinnen",
+            "im",
+            "in der",
+            "in dem",
+            "auf dem",
+            "zurück",
+            "meanwhile",
+            "later",
+            "suddenly",
+            "outside",
+            "inside",
+            "the next",
+            "hours later",
+            "days later",
         ];
         let lower = trimmed.to_lowercase();
         for marker in &time_place_markers {
@@ -2239,7 +2634,7 @@ fn process_paragraph_heuristic(text: &str) -> (String, usize) {
                 break;
             }
         }
-        
+
         // Rule 4: Long passage without paragraph (>500 chars) - break at next sentence end
         if chars_since_paragraph > 500 && i > 0 && !paragraph_positions.contains(&i) {
             if !is_dialogue_start && !last_was_dialogue {
@@ -2247,7 +2642,7 @@ fn process_paragraph_heuristic(text: &str) -> (String, usize) {
                 chars_since_paragraph = trimmed.len();
             }
         }
-        
+
         // Rule 5: Scene break indicators
         let scene_break_markers = ["* * *", "***", "---", "—", "· · ·"];
         for marker in &scene_break_markers {
@@ -2257,18 +2652,18 @@ fn process_paragraph_heuristic(text: &str) -> (String, usize) {
                 break;
             }
         }
-        
+
         last_was_dialogue = is_dialogue_end || (is_dialogue_start && !is_dialogue_end);
     }
-    
+
     // Remove duplicates and sort
     paragraph_positions.sort();
     paragraph_positions.dedup();
-    
+
     if paragraph_positions.is_empty() {
         return (text.to_string(), 0);
     }
-    
+
     // Build new text with paragraphs inserted
     let mut result_parts: Vec<String> = Vec::new();
     for (i, sentence) in sentences.iter().enumerate() {
@@ -2277,8 +2672,11 @@ fn process_paragraph_heuristic(text: &str) -> (String, usize) {
         }
         result_parts.push(sentence.to_string());
     }
-    
-    (result_parts.join("").trim().to_string(), paragraph_positions.len())
+
+    (
+        result_parts.join("").trim().to_string(),
+        paragraph_positions.len(),
+    )
 }
 
 /// AI-based paragraph detection using local LLM
@@ -2288,7 +2686,7 @@ fn auto_paragraph_with_ai(text: &str) -> Result<AutoParagraphResult, String> {
         .split_inclusive(|c| c == '.' || c == '!' || c == '?' || c == '"' || c == '»')
         .filter(|s| !s.trim().is_empty())
         .collect();
-    
+
     if sentences.is_empty() {
         return Ok(AutoParagraphResult {
             original_text: text.to_string(),
@@ -2299,14 +2697,17 @@ fn auto_paragraph_with_ai(text: &str) -> Result<AutoParagraphResult, String> {
             used_heuristic: false,
         });
     }
-    
+
     // Build numbered text for LLM
-    let numbered_text: String = sentences.iter().enumerate()
+    let numbered_text: String = sentences
+        .iter()
+        .enumerate()
         .map(|(i, s)| format!("[{}] {}", i + 1, s.trim()))
         .collect::<Vec<_>>()
         .join("\n");
-    
-    let prompt = format!(r#"Du bist ein Lektor. Analysiere den folgenden Text und bestimme, wo Absätze gesetzt werden sollten.
+
+    let prompt = format!(
+        r#"Du bist ein Lektor. Analysiere den folgenden Text und bestimme, wo Absätze gesetzt werden sollten.
 
 Regeln für neue Absätze:
 - Bei Sprecherwechsel im Dialog
@@ -2323,25 +2724,30 @@ Wenn keine Absätze nötig sind, antworte: []
 Text:
 {}
 
-Absätze nach Sätzen:"#, numbered_text);
+Absätze nach Sätzen:"#,
+        numbered_text
+    );
 
     // FORCE local LLM - use generate_tokens_for_prompt directly
-    log::info!("[auto-paragraph/ai] Starting analysis with {} sentences", sentences.len());
+    log::info!(
+        "[auto-paragraph/ai] Starting analysis with {} sentences",
+        sentences.len()
+    );
     let tokens = ai::generate_tokens_for_prompt(&prompt, 256);
-    
+
     // Join tokens to get response
     let response: String = tokens.join("");
     log::info!("[auto-paragraph/ai] LLM response: {}", response);
-    
+
     // Check for LLM errors - fall back to heuristic
     if response.starts_with("[LLM_ERROR:") {
         log::warn!("[auto-paragraph/ai] LLM error, falling back to heuristic");
         return Ok(auto_paragraph_heuristic(text));
     }
-    
+
     // Parse JSON array from response
     let paragraph_positions: Vec<usize> = parse_paragraph_positions(&response);
-    
+
     if paragraph_positions.is_empty() {
         return Ok(AutoParagraphResult {
             original_text: text.to_string(),
@@ -2352,7 +2758,7 @@ Absätze nach Sätzen:"#, numbered_text);
             used_heuristic: false,
         });
     }
-    
+
     // Build new text with paragraphs inserted
     let mut result_parts: Vec<String> = Vec::new();
     for (i, sentence) in sentences.iter().enumerate() {
@@ -2361,12 +2767,15 @@ Absätze nach Sätzen:"#, numbered_text);
             result_parts.push("\n\n".to_string());
         }
     }
-    
+
     let suggested = result_parts.join("").trim().to_string();
     let change_count = paragraph_positions.len();
-    
-    log::info!("[auto-paragraph/ai] Suggesting {} new paragraphs", change_count);
-    
+
+    log::info!(
+        "[auto-paragraph/ai] Suggesting {} new paragraphs",
+        change_count
+    );
+
     Ok(AutoParagraphResult {
         original_text: text.to_string(),
         suggested_text: suggested,
@@ -2381,7 +2790,7 @@ Absätze nach Sätzen:"#, numbered_text);
 fn parse_paragraph_positions(response: &str) -> Vec<usize> {
     // Try to find JSON array in response
     let trimmed = response.trim();
-    
+
     // Look for array pattern
     if let Some(start) = trimmed.find('[') {
         if let Some(end) = trimmed.rfind(']') {
@@ -2391,7 +2800,8 @@ fn parse_paragraph_positions(response: &str) -> Vec<usize> {
                 return positions;
             }
             // Try parsing with possible extra content
-            let clean: String = array_str.chars()
+            let clean: String = array_str
+                .chars()
                 .filter(|c| c.is_numeric() || *c == ',' || *c == '[' || *c == ']')
                 .collect();
             if let Ok(positions) = serde_json::from_str::<Vec<usize>>(&clean) {
@@ -2399,7 +2809,7 @@ fn parse_paragraph_positions(response: &str) -> Vec<usize> {
             }
         }
     }
-    
+
     Vec::new()
 }
 
@@ -2431,10 +2841,10 @@ fn set_active_ai_provider(req: SetActiveProviderRequest) -> Result<(), String> {
 
 /// Build RAG context for Fontaine based on query and current scene
 #[derive(serde::Deserialize)]
-struct BuildContextRequest { 
-    query: String, 
+struct BuildContextRequest {
+    query: String,
     #[serde(rename = "sceneId")]
-    scene_id: Option<String> 
+    scene_id: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -2449,12 +2859,18 @@ struct ContextResponse {
 }
 
 #[tauri::command]
-fn build_fontaine_context(req: BuildContextRequest, state: tauri::State<AppState>) -> Result<ContextResponse, String> {
-    let guard = state.db.lock().map_err(|e| format!("DB lock error: {}", e))?;
+fn build_fontaine_context(
+    req: BuildContextRequest,
+    state: tauri::State<AppState>,
+) -> Result<ContextResponse, String> {
+    let guard = state
+        .db
+        .lock()
+        .map_err(|e| format!("DB lock error: {}", e))?;
     let conn = guard.as_ref().ok_or("No database open")?;
-    
+
     let ctx = ai::context::build_context(conn, &req.query, req.scene_id.as_deref())?;
-    
+
     Ok(ContextResponse {
         context: ctx.to_prompt_context(Some(&req.query)),
         entity_count: ctx.entities.len(),
@@ -2464,7 +2880,9 @@ fn build_fontaine_context(req: BuildContextRequest, state: tauri::State<AppState
 }
 
 #[derive(serde::Deserialize)]
-struct CancelAiChatRequest { id: String }
+struct CancelAiChatRequest {
+    id: String,
+}
 
 #[tauri::command]
 fn cancel_ai_chat(req: CancelAiChatRequest) -> Result<bool, String> {
@@ -2472,10 +2890,15 @@ fn cancel_ai_chat(req: CancelAiChatRequest) -> Result<bool, String> {
 }
 
 #[tauri::command]
-fn set_ai_model(name: String) -> Result<(), String> { ai::set_current_model(&name); Ok(()) }
+fn set_ai_model(name: String) -> Result<(), String> {
+    ai::set_current_model(&name);
+    Ok(())
+}
 
 #[tauri::command]
-fn get_ai_model() -> Result<Option<String>, String> { Ok(ai::get_current_model()) }
+fn get_ai_model() -> Result<Option<String>, String> {
+    Ok(ai::get_current_model())
+}
 
 #[tauri::command]
 fn list_ai_models(app: tauri::AppHandle) -> Result<Vec<String>, String> {
@@ -2490,22 +2913,61 @@ fn load_ai_model(name: String, app: tauri::AppHandle) -> Result<bool, String> {
 }
 
 #[derive(serde::Serialize)]
-struct AiModelState { state: String }
+struct AiModelState {
+    state: String,
+}
 
 #[tauri::command]
 fn get_ai_model_state() -> Result<AiModelState, String> {
     use ai::LoadState::*;
     let st = ai::current_load_state();
-    let label = match &st { NotLoaded=>"notLoaded", Loading=>"loading", Ready=>"ready", Error(e)=> { return Ok(AiModelState{ state: format!("error:{e}") }); } };
-    Ok(AiModelState { state: label.to_string() })
+    let label = match &st {
+        NotLoaded => "notLoaded",
+        Loading => "loading",
+        Ready => "ready",
+        Error(e) => {
+            return Ok(AiModelState {
+                state: format!("error:{e}"),
+            });
+        }
+    };
+    Ok(AiModelState {
+        state: label.to_string(),
+    })
 }
 
 #[derive(serde::Serialize)]
-struct AiModelProgress { progress: f32 }
+struct AiModelProgress {
+    progress: f32,
+}
 
 #[tauri::command]
 fn get_ai_model_progress() -> Result<AiModelProgress, String> {
-    Ok(AiModelProgress { progress: ai::current_progress().unwrap_or(0.0) })
+    Ok(AiModelProgress {
+        progress: ai::current_progress().unwrap_or(0.0),
+    })
+}
+
+#[derive(serde::Serialize)]
+struct AiServerStatus {
+    running: bool,
+}
+
+/// Whether the resident MLX server is up. When false, inference still works
+/// via a per-request subprocess, just slower.
+#[tauri::command]
+fn get_ai_server_status() -> Result<AiServerStatus, String> {
+    Ok(AiServerStatus {
+        running: ai::server::is_running(),
+    })
+}
+
+/// Stops the resident server, freeing several GB of memory. The next request
+/// falls back to the subprocess path; reloading the model starts it again.
+#[tauri::command]
+fn stop_ai_server() -> Result<(), String> {
+    ai::server::stop();
+    Ok(())
 }
 
 // --- AI Provider Settings ---
@@ -2521,7 +2983,9 @@ struct AiProviderSettings {
     enabled: bool,
 }
 
-fn default_ai_enabled() -> bool { true }
+fn default_ai_enabled() -> bool {
+    true
+}
 
 impl Default for AiProviderSettings {
     fn default() -> Self {
@@ -2537,7 +3001,10 @@ impl Default for AiProviderSettings {
 }
 
 fn get_provider_settings_path(app: &tauri::AppHandle) -> std::path::PathBuf {
-    let config_dir = app.path_resolver().app_config_dir().unwrap_or_else(|| std::path::PathBuf::from("."));
+    let config_dir = app
+        .path_resolver()
+        .app_config_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
     config_dir.join("ai_provider_settings.json")
 }
 
@@ -2553,7 +3020,10 @@ fn get_ai_provider_settings(app: tauri::AppHandle) -> Result<AiProviderSettings,
 }
 
 #[tauri::command]
-fn save_ai_provider_settings(settings: AiProviderSettings, app: tauri::AppHandle) -> Result<(), String> {
+fn save_ai_provider_settings(
+    settings: AiProviderSettings,
+    app: tauri::AppHandle,
+) -> Result<(), String> {
     let path = get_provider_settings_path(&app);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -2568,7 +3038,8 @@ async fn test_ai_provider_connection(provider: String, api_key: String) -> Resul
     match provider.as_str() {
         "claude" => {
             let client = reqwest::Client::new();
-            let resp = client.get("https://api.anthropic.com/v1/models")
+            let resp = client
+                .get("https://api.anthropic.com/v1/models")
                 .header("x-api-key", &api_key)
                 .header("anthropic-version", "2023-06-01")
                 .send()
@@ -2578,14 +3049,15 @@ async fn test_ai_provider_connection(provider: String, api_key: String) -> Resul
         }
         "openai" => {
             let client = reqwest::Client::new();
-            let resp = client.get("https://api.openai.com/v1/models")
+            let resp = client
+                .get("https://api.openai.com/v1/models")
                 .header("Authorization", format!("Bearer {}", api_key))
                 .send()
                 .await
                 .map_err(|e| e.to_string())?;
             Ok(resp.status().is_success())
         }
-        _ => Err("Unknown provider".to_string())
+        _ => Err("Unknown provider".to_string()),
     }
 }
 
@@ -2635,15 +3107,18 @@ struct ModelRegistryEntry {
 /// List all available models from registry
 #[tauri::command]
 fn list_model_registry() -> Result<Vec<ModelRegistryEntry>, String> {
-    Ok(registry::REGISTRY.iter().map(|m| ModelRegistryEntry {
-        id: m.id.to_string(),
-        name: m.name.to_string(),
-        quantization: m.quantization.to_string(),
-        size_bytes: m.size_bytes,
-        ram_required_mb: m.ram_required_mb,
-        is_bundled: m.is_bundled,
-        download_url: m.download_url.map(|s| s.to_string()),
-    }).collect())
+    Ok(registry::REGISTRY
+        .iter()
+        .map(|m| ModelRegistryEntry {
+            id: m.id.to_string(),
+            name: m.name.to_string(),
+            quantization: m.quantization.to_string(),
+            size_bytes: m.size_bytes,
+            ram_required_mb: m.ram_required_mb,
+            is_bundled: m.is_bundled,
+            download_url: m.download_url.map(|s| s.to_string()),
+        })
+        .collect())
 }
 
 /// Check if a specific model file exists locally
@@ -2679,9 +3154,8 @@ struct DownloadProgressResponse {
 async fn start_model_download(model_id: String) -> Result<(), String> {
     // Check hardware requirements first
     let hw = hardware::HardwareInfo::detect();
-    let info = registry::find(&model_id)
-        .ok_or_else(|| format!("Unknown model: {}", model_id))?;
-    
+    let info = registry::find(&model_id).ok_or_else(|| format!("Unknown model: {}", model_id))?;
+
     // Check if model requires more RAM than available
     if info.ram_required_mb as u64 > hw.total_ram_mb {
         return Err(format!(
@@ -2689,7 +3163,7 @@ async fn start_model_download(model_id: String) -> Result<(), String> {
             info.name, info.ram_required_mb, hw.total_ram_mb
         ));
     }
-    
+
     // Start async download
     tokio::spawn(async move {
         match downloader::start_download(&model_id).await {
@@ -2697,29 +3171,31 @@ async fn start_model_download(model_id: String) -> Result<(), String> {
             Err(e) => log::error!("[download] Failed: {}", e),
         }
     });
-    
+
     Ok(())
 }
 
 /// Get current download progress
 #[tauri::command]
 fn get_download_progress() -> Result<Option<DownloadProgressResponse>, String> {
-    Ok(downloader::get_progress().map(|p| DownloadProgressResponse {
-        model_id: p.model_id,
-        status: match p.status {
-            downloader::DownloadStatus::Idle => "idle".to_string(),
-            downloader::DownloadStatus::Downloading => "downloading".to_string(),
-            downloader::DownloadStatus::Verifying => "verifying".to_string(),
-            downloader::DownloadStatus::Complete => "complete".to_string(),
-            downloader::DownloadStatus::Failed(msg) => format!("error:{}", msg),
-            downloader::DownloadStatus::Cancelled => "cancelled".to_string(),
-        },
-        bytes_downloaded: p.bytes_downloaded,
-        bytes_total: p.bytes_total,
-        percent: p.percent,
-        speed_mbps: p.speed_bps as f32 / 1_000_000.0,
-        eta_seconds: p.eta_seconds,
-    }))
+    Ok(
+        downloader::get_progress().map(|p| DownloadProgressResponse {
+            model_id: p.model_id,
+            status: match p.status {
+                downloader::DownloadStatus::Idle => "idle".to_string(),
+                downloader::DownloadStatus::Downloading => "downloading".to_string(),
+                downloader::DownloadStatus::Verifying => "verifying".to_string(),
+                downloader::DownloadStatus::Complete => "complete".to_string(),
+                downloader::DownloadStatus::Failed(msg) => format!("error:{}", msg),
+                downloader::DownloadStatus::Cancelled => "cancelled".to_string(),
+            },
+            bytes_downloaded: p.bytes_downloaded,
+            bytes_total: p.bytes_total,
+            percent: p.percent,
+            speed_mbps: p.speed_bps as f32 / 1_000_000.0,
+            eta_seconds: p.eta_seconds,
+        }),
+    )
 }
 
 /// Cancel current download
@@ -2753,67 +3229,79 @@ struct ModelDetailedInfo {
 #[tauri::command]
 fn get_models_with_status(app: tauri::AppHandle) -> Vec<ModelDetailedInfo> {
     let resource_dir = app.path_resolver().resource_dir();
-    
-    registry::REGISTRY.iter().map(|m| {
-        let is_downloaded = downloader::get_model_path(m.id, resource_dir.clone()).is_some();
-        let is_downloading = downloader::get_progress()
-            .map(|p| p.model_id == m.id && matches!(p.status, downloader::DownloadStatus::Downloading))
-            .unwrap_or(false);
-        
-        // Format size nicely
-        let size_display = if m.size_bytes >= 1_000_000_000 {
-            format!("{:.1} GB", m.size_bytes as f64 / 1_000_000_000.0)
-        } else {
-            format!("{:.0} MB", m.size_bytes as f64 / 1_000_000.0)
-        };
-        
-        ModelDetailedInfo {
-            id: m.id.to_string(),
-            name: m.name.to_string(),
-            size_bytes: m.size_bytes,
-            size_display,
-            ram_required_mb: m.ram_required_mb,
-            quantization: m.quantization.to_string(),
-            is_downloaded,
-            is_downloading,
-            download_url: m.download_url.map(|s| s.to_string()),
-        }
-    }).collect()
+
+    registry::REGISTRY
+        .iter()
+        .map(|m| {
+            let is_downloaded = downloader::get_model_path(m.id, resource_dir.clone()).is_some();
+            let is_downloading = downloader::get_progress()
+                .map(|p| {
+                    p.model_id == m.id
+                        && matches!(p.status, downloader::DownloadStatus::Downloading)
+                })
+                .unwrap_or(false);
+
+            // Format size nicely
+            let size_display = if m.size_bytes >= 1_000_000_000 {
+                format!("{:.1} GB", m.size_bytes as f64 / 1_000_000_000.0)
+            } else {
+                format!("{:.0} MB", m.size_bytes as f64 / 1_000_000.0)
+            };
+
+            ModelDetailedInfo {
+                id: m.id.to_string(),
+                name: m.name.to_string(),
+                size_bytes: m.size_bytes,
+                size_display,
+                ram_required_mb: m.ram_required_mb,
+                quantization: m.quantization.to_string(),
+                is_downloaded,
+                is_downloading,
+                download_url: m.download_url.map(|s| s.to_string()),
+            }
+        })
+        .collect()
 }
 
 /// Delete a downloaded model
 #[tauri::command]
 fn delete_downloaded_model(model_id: String) -> Result<(), String> {
     let models_dir = downloader::get_models_dir().map_err(|e| e.to_string())?;
-    
+
     // Try both possible filenames
     let paths = vec![
         models_dir.join(format!("{}.gguf", model_id)),
         models_dir.join(format!("{}.gguf.partial", model_id)),
     ];
-    
+
     for path in paths {
         if path.exists() {
             std::fs::remove_file(&path).map_err(|e| e.to_string())?;
             log::info!("[delete_model] Deleted: {:?}", path);
         }
     }
-    
+
     Ok(())
 }
 
 #[tauri::command]
-fn get_ai_settings(state: State<AppState>) -> Result<featherworks_author::storage::database::AiSettings, String> {
+fn get_ai_settings(
+    state: State<AppState>,
+) -> Result<featherworks_author::storage::database::AiSettings, String> {
     let db_lock = state.db.lock().map_err(|e| e.to_string())?;
     let conn = db_lock.as_ref().ok_or("Database not open")?;
     featherworks_author::storage::database::load_ai_settings(conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn save_ai_settings_cmd(settings: featherworks_author::storage::database::AiSettings, state: State<AppState>) -> Result<(), String> {
+fn save_ai_settings_cmd(
+    settings: featherworks_author::storage::database::AiSettings,
+    state: State<AppState>,
+) -> Result<(), String> {
     let mut db_lock = state.db.lock().map_err(|e| e.to_string())?;
     let conn = db_lock.as_mut().ok_or("Database not open")?;
-    featherworks_author::storage::database::save_ai_settings(conn, &settings).map_err(|e| e.to_string())
+    featherworks_author::storage::database::save_ai_settings(conn, &settings)
+        .map_err(|e| e.to_string())
 }
 
 /// Restart the app to apply language changes (rebuilds native menu)
@@ -2895,8 +3383,8 @@ fn save_user_profile(profile: UserProfile) -> Result<(), String> {
 pub struct PacingSettings {
     pub chapter_goal: u32,
     pub daily_goal: u32,
-    pub daily_goal_unit: String,  // "words", "characters", "minutes"
-    pub ring_target: String,      // "scene" or "chapter"
+    pub daily_goal_unit: String, // "words", "characters", "minutes"
+    pub ring_target: String,     // "scene" or "chapter"
     pub show_total_always: bool,
     pub genre: String,
 }
@@ -2965,11 +3453,20 @@ struct CreateEntityTypeRequest {
 }
 
 #[tauri::command]
-fn create_entity_type(req: CreateEntityTypeRequest, state: State<AppState>) -> Result<database::EntityType, String> {
+fn create_entity_type(
+    req: CreateEntityTypeRequest,
+    state: State<AppState>,
+) -> Result<database::EntityType, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    database::create_entity_type(conn, &req.name, &req.name_plural, &req.icon, &req.default_color)
-        .map_err(|e| e.to_string())
+    database::create_entity_type(
+        conn,
+        &req.name,
+        &req.name_plural,
+        &req.icon,
+        &req.default_color,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[derive(serde::Deserialize)]
@@ -2987,17 +3484,32 @@ struct UpdateEntityTypeRequest {
 fn update_entity_type(req: UpdateEntityTypeRequest, state: State<AppState>) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    let schema = if req.schema_json.is_empty() { "[]" } else { &req.schema_json };
-    database::update_entity_type(conn, &req.type_id, &req.name, &req.name_plural, &req.icon, &req.default_color, schema)
-        .map_err(|e| e.to_string())
+    let schema = if req.schema_json.is_empty() {
+        "[]"
+    } else {
+        &req.schema_json
+    };
+    database::update_entity_type(
+        conn,
+        &req.type_id,
+        &req.name,
+        &req.name_plural,
+        &req.icon,
+        &req.default_color,
+        schema,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn update_entity_type_schema(type_id: String, schema_json: String, state: State<AppState>) -> Result<(), String> {
+fn update_entity_type_schema(
+    type_id: String,
+    schema_json: String,
+    state: State<AppState>,
+) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    database::update_entity_type_schema(conn, &type_id, &schema_json)
-        .map_err(|e| e.to_string())
+    database::update_entity_type_schema(conn, &type_id, &schema_json).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -3008,7 +3520,10 @@ fn delete_entity_type(type_id: String, state: State<AppState>) -> Result<(), Str
 }
 
 #[tauri::command]
-fn list_entities(type_id: Option<String>, state: State<AppState>) -> Result<Vec<database::Entity>, String> {
+fn list_entities(
+    type_id: Option<String>,
+    state: State<AppState>,
+) -> Result<Vec<database::Entity>, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     database::list_entities(conn, type_id.as_deref()).map_err(|e| e.to_string())
@@ -3036,16 +3551,28 @@ struct CreateEntityRequest {
     metadata_json: String,
 }
 
-fn default_metadata() -> String { "{}".to_string() }
+fn default_metadata() -> String {
+    "{}".to_string()
+}
 
 #[tauri::command]
-fn create_entity(req: CreateEntityRequest, state: State<AppState>) -> Result<database::Entity, String> {
+fn create_entity(
+    req: CreateEntityRequest,
+    state: State<AppState>,
+) -> Result<database::Entity, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     database::create_entity(
-        conn, &req.type_id, &req.name, &req.aliases, &req.description, 
-        &req.notes, req.color.as_deref(), &req.metadata_json
-    ).map_err(|e| e.to_string())
+        conn,
+        &req.type_id,
+        &req.name,
+        &req.aliases,
+        &req.description,
+        &req.notes,
+        req.color.as_deref(),
+        &req.metadata_json,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[derive(serde::Deserialize)]
@@ -3068,9 +3595,16 @@ fn update_entity(req: UpdateEntityRequest, state: State<AppState>) -> Result<(),
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     database::update_entity(
-        conn, &req.id, &req.name, &req.aliases, &req.description,
-        &req.notes, req.color.as_deref(), &req.metadata_json
-    ).map_err(|e| e.to_string())
+        conn,
+        &req.id,
+        &req.name,
+        &req.aliases,
+        &req.description,
+        &req.notes,
+        req.color.as_deref(),
+        &req.metadata_json,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -3084,7 +3618,10 @@ fn delete_entity(id: String, state: State<AppState>) -> Result<(), String> {
 
 /// List images for an entity (metadata only)
 #[tauri::command]
-fn list_entity_images(entity_id: String, state: State<AppState>) -> Result<Vec<database::EntityImageMeta>, String> {
+fn list_entity_images(
+    entity_id: String,
+    state: State<AppState>,
+) -> Result<Vec<database::EntityImageMeta>, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     database::list_entity_images(conn, &entity_id).map_err(|e| e.to_string())
@@ -3096,10 +3633,10 @@ fn get_entity_image(image_id: String, state: State<AppState>) -> Result<EntityIm
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     let image = database::get_entity_image(conn, &image_id).map_err(|e| e.to_string())?;
-    
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
     let base64_data = STANDARD.encode(&image.data);
-    
+
     Ok(EntityImageData {
         id: image.id,
         entity_id: image.entity_id,
@@ -3119,7 +3656,7 @@ struct EntityImageData {
     name: String,
     file_name: String,
     mime_type: String,
-    data_url: String,  // data:image/png;base64,... for direct use in <img src>
+    data_url: String, // data:image/png;base64,... for direct use in <img src>
     order_num: i32,
     created_at: String,
 }
@@ -3130,38 +3667,53 @@ struct AddEntityImageRequest {
     name: String,
     file_name: String,
     mime_type: String,
-    base64_data: String,  // Base64-encoded image data
+    base64_data: String, // Base64-encoded image data
 }
 
 /// Add an image to an entity (max 3 per entity)
 #[tauri::command]
-fn add_entity_image(req: AddEntityImageRequest, state: State<AppState>) -> Result<database::EntityImageMeta, String> {
+fn add_entity_image(
+    req: AddEntityImageRequest,
+    state: State<AppState>,
+) -> Result<database::EntityImageMeta, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    
+
     // Check max images limit (3)
     let count = database::count_entity_images(conn, &req.entity_id).map_err(|e| e.to_string())?;
     if count >= 3 {
         return Err("Maximum 3 images per entity allowed".to_string());
     }
-    
+
     // Decode base64 data
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
-    let data = STANDARD.decode(&req.base64_data)
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let data = STANDARD
+        .decode(&req.base64_data)
         .map_err(|e| format!("Invalid base64 data: {}", e))?;
-    
+
     // Limit file size (5MB)
     if data.len() > 5 * 1024 * 1024 {
         return Err("Image too large (max 5MB)".to_string());
     }
-    
-    database::add_entity_image(conn, &req.entity_id, &req.name, &req.file_name, &req.mime_type, &data)
-        .map_err(|e| e.to_string())
+
+    database::add_entity_image(
+        conn,
+        &req.entity_id,
+        &req.name,
+        &req.file_name,
+        &req.mime_type,
+        &data,
+    )
+    .map_err(|e| e.to_string())
 }
 
 /// Update an image's name
 #[tauri::command]
-fn update_entity_image_name(image_id: String, name: String, state: State<AppState>) -> Result<(), String> {
+fn update_entity_image_name(
+    image_id: String,
+    name: String,
+    state: State<AppState>,
+) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     database::update_entity_image_name(conn, &image_id, &name).map_err(|e| e.to_string())
@@ -3182,9 +3734,16 @@ fn get_entity_highlights(state: State<AppState>) -> Result<Vec<EntityHighlight>,
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     let raw = database::get_entity_names_for_highlighting(conn).map_err(|e| e.to_string())?;
-    Ok(raw.into_iter().map(|(id, type_id, name, aliases, color)| {
-        EntityHighlight { id, type_id, name, aliases, color }
-    }).collect())
+    Ok(raw
+        .into_iter()
+        .map(|(id, type_id, name, aliases, color)| EntityHighlight {
+            id,
+            type_id,
+            name,
+            aliases,
+            color,
+        })
+        .collect())
 }
 
 #[derive(serde::Serialize)]
@@ -3206,33 +3765,41 @@ fn list_rag_documents(state: State<AppState>) -> Result<Vec<database::RagDocumen
 }
 
 #[tauri::command]
-fn import_rag_document(path: String, state: State<AppState>) -> Result<database::RagDocument, String> {
-    use ai::extraction::extract_text;
+fn import_rag_document(
+    path: String,
+    state: State<AppState>,
+) -> Result<database::RagDocument, String> {
     use ai::chunking::chunk_rag_document;
-    
+    use ai::extraction::extract_text;
+
     // Extract text from document
     let extracted = extract_text(&path)?;
-    
+
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    
+
     // Save the document
     let doc = database::add_rag_document(
-        conn, 
-        &extracted.file_name, 
-        &extracted.file_type, 
-        extracted.file_size as i64, 
-        &extracted.content
-    ).map_err(|e| e.to_string())?;
-    
+        conn,
+        &extracted.file_name,
+        &extracted.file_type,
+        extracted.file_size as i64,
+        &extracted.content,
+    )
+    .map_err(|e| e.to_string())?;
+
     // Create chunks for RAG
     let chunks = chunk_rag_document(&doc.id, &extracted.file_name, &extracted.content);
-    
+
     // Save chunks to database
     database::save_chunks(conn, &chunks).map_err(|e| e.to_string())?;
-    
-    log::info!("Imported RAG document '{}' with {} chunks", extracted.file_name, chunks.len());
-    
+
+    log::info!(
+        "Imported RAG document '{}' with {} chunks",
+        extracted.file_name,
+        chunks.len()
+    );
+
     Ok(doc)
 }
 
@@ -3240,10 +3807,10 @@ fn import_rag_document(path: String, state: State<AppState>) -> Result<database:
 fn remove_rag_document(id: String, state: State<AppState>) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    
+
     // Delete chunks first
     database::delete_chunks_by_source(conn, &id).map_err(|e| e.to_string())?;
-    
+
     // Then delete the document
     database::remove_rag_document(conn, &id).map_err(|e| e.to_string())
 }
@@ -3252,13 +3819,15 @@ fn remove_rag_document(id: String, state: State<AppState>) -> Result<(), String>
 fn clear_all_rag_data(state: State<AppState>) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    
+
     // Delete all chunks
-    conn.execute("DELETE FROM rag_chunks", []).map_err(|e| e.to_string())?;
-    
+    conn.execute("DELETE FROM rag_chunks", [])
+        .map_err(|e| e.to_string())?;
+
     // Delete all documents
-    conn.execute("DELETE FROM rag_documents", []).map_err(|e| e.to_string())?;
-    
+    conn.execute("DELETE FROM rag_documents", [])
+        .map_err(|e| e.to_string())?;
+
     log::info!("Cleared all RAG data");
     Ok(())
 }
@@ -3275,14 +3844,24 @@ fn list_subplots(state: State<AppState>) -> Result<Vec<plot::Subplot>, String> {
 }
 
 #[tauri::command]
-fn create_subplot(name: String, color: String, state: State<AppState>) -> Result<plot::Subplot, String> {
+fn create_subplot(
+    name: String,
+    color: String,
+    state: State<AppState>,
+) -> Result<plot::Subplot, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     plot::create_subplot(conn, &name, &color)
 }
 
 #[tauri::command]
-fn update_subplot(id: String, name: String, description: String, color: String, state: State<AppState>) -> Result<(), String> {
+fn update_subplot(
+    id: String,
+    name: String,
+    description: String,
+    color: String,
+    state: State<AppState>,
+) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     plot::update_subplot(conn, &id, &name, &description, &color)
@@ -3311,10 +3890,10 @@ fn list_plot_points(state: State<AppState>) -> Result<Vec<plot::PlotPoint>, Stri
 
 #[tauri::command]
 fn create_plot_point(
-    subplot_id: Option<String>, 
-    title: String, 
+    subplot_id: Option<String>,
+    title: String,
     position_percent: f64,
-    state: State<AppState>
+    state: State<AppState>,
 ) -> Result<plot::PlotPoint, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
@@ -3323,18 +3902,27 @@ fn create_plot_point(
 
 #[tauri::command]
 fn update_plot_point(
-    id: String, 
-    title: String, 
-    description: String, 
+    id: String,
+    title: String,
+    description: String,
     subplot_id: Option<String>,
     position_percent: f64,
     structure_position: Option<String>,
     status: String,
-    state: State<AppState>
+    state: State<AppState>,
 ) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    plot::update_plot_point(conn, &id, &title, &description, subplot_id.as_deref(), position_percent, structure_position.as_deref(), &status)
+    plot::update_plot_point(
+        conn,
+        &id,
+        &title,
+        &description,
+        subplot_id.as_deref(),
+        position_percent,
+        structure_position.as_deref(),
+        &status,
+    )
 }
 
 #[tauri::command]
@@ -3345,7 +3933,11 @@ fn delete_plot_point(id: String, state: State<AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn move_plot_point(id: String, new_position_percent: f64, state: State<AppState>) -> Result<(), String> {
+fn move_plot_point(
+    id: String,
+    new_position_percent: f64,
+    state: State<AppState>,
+) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     plot::move_plot_point(conn, &id, new_position_percent)
@@ -3359,28 +3951,42 @@ fn reorder_plot_points(ids: Vec<String>, state: State<AppState>) -> Result<(), S
 }
 
 #[tauri::command]
-fn link_scene_to_plot(plot_point_id: String, scene_id: String, state: State<AppState>) -> Result<(), String> {
+fn link_scene_to_plot(
+    plot_point_id: String,
+    scene_id: String,
+    state: State<AppState>,
+) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     plot::link_scene_to_plot(conn, &plot_point_id, &scene_id)
 }
 
 #[tauri::command]
-fn unlink_scene_from_plot(plot_point_id: String, scene_id: String, state: State<AppState>) -> Result<(), String> {
+fn unlink_scene_from_plot(
+    plot_point_id: String,
+    scene_id: String,
+    state: State<AppState>,
+) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     plot::unlink_scene_from_plot(conn, &plot_point_id, &scene_id)
 }
 
 #[tauri::command]
-fn get_scenes_for_plot_point(plot_point_id: String, state: State<AppState>) -> Result<Vec<String>, String> {
+fn get_scenes_for_plot_point(
+    plot_point_id: String,
+    state: State<AppState>,
+) -> Result<Vec<String>, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     plot::get_scenes_for_plot_point(conn, &plot_point_id)
 }
 
 #[tauri::command]
-fn get_plot_points_for_scene(scene_id: String, state: State<AppState>) -> Result<Vec<String>, String> {
+fn get_plot_points_for_scene(
+    scene_id: String,
+    state: State<AppState>,
+) -> Result<Vec<String>, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     plot::get_plot_points_for_scene(conn, &scene_id)
@@ -3398,7 +4004,11 @@ fn list_research_folders(state: State<AppState>) -> Result<Vec<research::Researc
 }
 
 #[tauri::command]
-fn create_research_folder(name: String, parent_id: Option<String>, state: State<AppState>) -> Result<research::ResearchFolder, String> {
+fn create_research_folder(
+    name: String,
+    parent_id: Option<String>,
+    state: State<AppState>,
+) -> Result<research::ResearchFolder, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     research::create_research_folder(conn, &name, parent_id.as_deref())
@@ -3412,7 +4022,11 @@ fn update_research_folder(id: String, name: String, state: State<AppState>) -> R
 }
 
 #[tauri::command]
-fn move_research_folder(id: String, new_parent_id: Option<String>, state: State<AppState>) -> Result<(), String> {
+fn move_research_folder(
+    id: String,
+    new_parent_id: Option<String>,
+    state: State<AppState>,
+) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     research::move_research_folder(conn, &id, new_parent_id.as_deref())
@@ -3426,7 +4040,10 @@ fn delete_research_folder(id: String, state: State<AppState>) -> Result<(), Stri
 }
 
 #[tauri::command]
-fn list_research_items(folder_id: Option<String>, state: State<AppState>) -> Result<Vec<research::ResearchItem>, String> {
+fn list_research_items(
+    folder_id: Option<String>,
+    state: State<AppState>,
+) -> Result<Vec<research::ResearchItem>, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     research::list_research_items(conn, folder_id.as_deref())
@@ -3434,47 +4051,53 @@ fn list_research_items(folder_id: Option<String>, state: State<AppState>) -> Res
 
 #[tauri::command]
 fn create_research_item(
-    folder_id: Option<String>, 
+    folder_id: Option<String>,
     item_type: String,
-    title: String, 
-    content: String, 
-    source_url: Option<String>, 
-    state: State<AppState>
+    title: String,
+    content: String,
+    source_url: Option<String>,
+    state: State<AppState>,
 ) -> Result<research::ResearchItem, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    let item_type_enum: research::ResearchItemType = item_type.parse()
-        .map_err(|e: String| e)?;
-    research::create_research_item(conn, folder_id.as_deref(), item_type_enum, &title, &content, source_url.as_deref())
+    let item_type_enum: research::ResearchItemType = item_type.parse().map_err(|e: String| e)?;
+    research::create_research_item(
+        conn,
+        folder_id.as_deref(),
+        item_type_enum,
+        &title,
+        &content,
+        source_url.as_deref(),
+    )
 }
 
 #[tauri::command]
 fn create_research_file(
-    folder_id: Option<String>, 
+    folder_id: Option<String>,
     item_type: String,
-    title: String, 
+    title: String,
     file_name: String,
     mime_type: String,
     file_data: String, // Base64 encoded
-    state: State<AppState>
+    state: State<AppState>,
 ) -> Result<research::ResearchItem, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    let item_type_enum: research::ResearchItemType = item_type.parse()
-        .map_err(|e: String| e)?;
-    
+    let item_type_enum: research::ResearchItemType = item_type.parse().map_err(|e: String| e)?;
+
     // Decode base64
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
-    let bytes = STANDARD.decode(&file_data)
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let bytes = STANDARD
+        .decode(&file_data)
         .map_err(|e| format!("Failed to decode file data: {}", e))?;
-    
+
     research::create_research_file(
-        conn, 
-        folder_id.as_deref(), 
-        item_type_enum, 
-        &title, 
-        &file_name, 
-        &mime_type, 
+        conn,
+        folder_id.as_deref(),
+        item_type_enum,
+        &title,
+        &file_name,
+        &mime_type,
         &bytes,
         None, // extracted_text
     )
@@ -3484,22 +4107,22 @@ fn create_research_file(
 fn get_research_file_data(id: String, state: State<AppState>) -> Result<String, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    
+
     let (_file_name, _mime_type, bytes) = research::get_research_file_data(conn, &id)?;
-    
+
     // Encode to base64 for transport
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
     Ok(STANDARD.encode(&bytes))
 }
 
 #[tauri::command]
 fn update_research_item(
-    id: String, 
-    title: String, 
-    content: String, 
-    source_url: Option<String>, 
+    id: String,
+    title: String,
+    content: String,
+    source_url: Option<String>,
     tags: Vec<String>,
-    state: State<AppState>
+    state: State<AppState>,
 ) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
@@ -3507,7 +4130,11 @@ fn update_research_item(
 }
 
 #[tauri::command]
-fn move_research_item(id: String, new_folder_id: Option<String>, state: State<AppState>) -> Result<(), String> {
+fn move_research_item(
+    id: String,
+    new_folder_id: Option<String>,
+    state: State<AppState>,
+) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     research::move_research_item(conn, &id, new_folder_id.as_deref())
@@ -3521,14 +4148,21 @@ fn delete_research_item(id: String, state: State<AppState>) -> Result<(), String
 }
 
 #[tauri::command]
-fn save_research_extracted_facts(id: String, facts_json: String, state: State<AppState>) -> Result<(), String> {
+fn save_research_extracted_facts(
+    id: String,
+    facts_json: String,
+    state: State<AppState>,
+) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     research::save_extracted_facts(conn, &id, &facts_json)
 }
 
 #[tauri::command]
-fn search_research(query: String, state: State<AppState>) -> Result<Vec<research::ResearchItem>, String> {
+fn search_research(
+    query: String,
+    state: State<AppState>,
+) -> Result<Vec<research::ResearchItem>, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     research::search_research(conn, &query)
@@ -3546,7 +4180,10 @@ fn get_layout_settings(state: State<AppState>) -> Result<layout::LayoutSettings,
 }
 
 #[tauri::command]
-fn save_layout_settings(settings: layout::LayoutSettings, state: State<AppState>) -> Result<(), String> {
+fn save_layout_settings(
+    settings: layout::LayoutSettings,
+    state: State<AppState>,
+) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     layout::save_layout_settings(conn, &settings)
@@ -3560,7 +4197,12 @@ fn list_layout_presets(state: State<AppState>) -> Result<Vec<layout::LayoutPrese
 }
 
 #[tauri::command]
-fn save_layout_preset(name: String, description: String, settings: layout::LayoutSettings, state: State<AppState>) -> Result<layout::LayoutPreset, String> {
+fn save_layout_preset(
+    name: String,
+    description: String,
+    settings: layout::LayoutSettings,
+    state: State<AppState>,
+) -> Result<layout::LayoutPreset, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     layout::save_layout_preset(conn, &name, &description, &settings)
@@ -3591,23 +4233,35 @@ fn export_manuscript_epub(
     output_path: String,
     title: String,
     author: String,
-    state: State<AppState>
+    state: State<AppState>,
 ) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     let settings = layout::get_layout_settings(conn)?;
-    
-    let chapters: Vec<layout::ChapterContent> = chapters.into_iter().map(|c| {
-        layout::ChapterContent {
+
+    let chapters: Vec<layout::ChapterContent> = chapters
+        .into_iter()
+        .map(|c| layout::ChapterContent {
             title: c.title,
-            scenes: c.scenes.into_iter().map(|s| layout::SceneContent {
-                title: s.title,
-                content: s.content,
-            }).collect(),
-        }
-    }).collect();
-    
-    layout::export_to_epub(&chapters, std::path::Path::new(&output_path), &title, &author, &settings, None)
+            scenes: c
+                .scenes
+                .into_iter()
+                .map(|s| layout::SceneContent {
+                    title: s.title,
+                    content: s.content,
+                })
+                .collect(),
+        })
+        .collect();
+
+    layout::export_to_epub(
+        &chapters,
+        std::path::Path::new(&output_path),
+        &title,
+        &author,
+        &settings,
+        None,
+    )
 }
 
 /// Render the manuscript to a temp PDF for the preview window and return the path
@@ -3659,48 +4313,53 @@ fn render_preview_pdf(
 fn open_preview_window(app_handle: tauri::AppHandle, state: State<AppState>) -> Result<(), String> {
     use tauri::Manager;
     println!("[preview] open_preview_window called");
-    
+
     // First, render the preview PDF
     let pdf_path = {
         let guard = state.db.lock().unwrap();
         let conn = guard.as_ref().ok_or("No project open")?;
-        
+
         // Get project metadata
         let project = database::get_project(conn).map_err(|e| e.to_string())?;
         let title = project.title.clone();
         let author = project.author.clone();
-        
+
         // Get all chapters and scenes
         let chapters = database::list_chapters(conn).map_err(|e| e.to_string())?;
         let mut chapter_contents: Vec<layout::ChapterContent> = Vec::new();
-        
+
         for chapter in chapters {
             let scenes = database::list_scenes(conn, &chapter.id).map_err(|e| e.to_string())?;
             let mut scene_contents: Vec<layout::SceneContent> = Vec::new();
-            
+
             for scene in scenes {
                 // Get scene content separately
-                let (content, _word_count) = database::get_scene_content(conn, &scene.id).map_err(|e| e.to_string())?;
+                let (content, _word_count) =
+                    database::get_scene_content(conn, &scene.id).map_err(|e| e.to_string())?;
                 scene_contents.push(layout::SceneContent {
                     title: scene.title,
                     content,
                 });
             }
-            
+
             chapter_contents.push(layout::ChapterContent {
                 title: chapter.title,
                 scenes: scene_contents,
             });
         }
-        
+
         // Get layout settings
         let settings = layout::get_layout_settings(conn)?;
-        
-        println!("[preview] Layout settings: page_width={}mm, page_height={}mm", settings.page_width, settings.page_height);
-        
+
+        println!(
+            "[preview] Layout settings: page_width={}mm, page_height={}mm",
+            settings.page_width, settings.page_height
+        );
+
         // Generate Typst content
-        let typst_content = layout::manuscript_to_typst(&chapter_contents, &settings, &title, &author);
-        
+        let typst_content =
+            layout::manuscript_to_typst(&chapter_contents, &settings, &title, &author);
+
         // Write to cache directory
         let cache_dir = app_handle
             .path_resolver()
@@ -3709,7 +4368,7 @@ fn open_preview_window(app_handle: tauri::AppHandle, state: State<AppState>) -> 
         let preview_dir = cache_dir.join("preview");
         std::fs::create_dir_all(&preview_dir).map_err(|e| format!("mkdir failed: {e}"))?;
         let pdf_path = preview_dir.join("preview.pdf");
-        
+
         println!("[preview] Exporting to PDF: {:?}", pdf_path);
         match layout::export_to_pdf(&typst_content, &pdf_path) {
             Ok(_) => println!("[preview] PDF exported successfully"),
@@ -3718,12 +4377,12 @@ fn open_preview_window(app_handle: tauri::AppHandle, state: State<AppState>) -> 
                 return Err(e);
             }
         }
-        
+
         pdf_path.to_string_lossy().to_string()
     };
-    
+
     println!("[preview] PDF path: {}", pdf_path);
-    
+
     // Open or focus the preview window
     let win = if let Some(win) = app_handle.get_window("preview") {
         println!("[preview] Found existing preview window, showing...");
@@ -3736,77 +4395,88 @@ fn open_preview_window(app_handle: tauri::AppHandle, state: State<AppState>) -> 
         let url = tauri::WindowUrl::External("http://localhost:5173#/preview".parse().unwrap());
         #[cfg(not(debug_assertions))]
         let url = tauri::WindowUrl::App("index.html#/preview".into());
-        
+
         let win = tauri::WindowBuilder::new(&app_handle, "preview", url)
             .title("Layout-Vorschau")
             .inner_size(1100.0, 850.0)
             .resizable(true)
             .build()
-            .map_err(|e| { 
+            .map_err(|e| {
                 println!("[preview] Window creation error: {}", e);
-                e.to_string() 
+                e.to_string()
             })?;
         println!("[preview] Preview window created successfully");
         win
     };
-    
+
     // Send the PDF path to the preview window after a short delay to ensure it's loaded
     let pdf_path_clone = pdf_path.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(500));
-        println!("[preview] Sending preview_refresh event with path: {}", pdf_path_clone);
+        println!(
+            "[preview] Sending preview_refresh event with path: {}",
+            pdf_path_clone
+        );
         let _ = win.emit("preview_refresh", pdf_path_clone);
     });
-    
+
     Ok(())
 }
 
 /// Open PDF preview window (exact Typst-rendered PDF)
 #[tauri::command]
-fn open_pdf_preview_window(app_handle: tauri::AppHandle, state: State<AppState>) -> Result<(), String> {
+fn open_pdf_preview_window(
+    app_handle: tauri::AppHandle,
+    state: State<AppState>,
+) -> Result<(), String> {
     use tauri::Manager;
     println!("[pdf-preview] open_pdf_preview_window called");
-    
+
     // First, render the preview PDF
     let pdf_path = {
         let guard = state.db.lock().unwrap();
         let conn = guard.as_ref().ok_or("No project open")?;
-        
+
         // Get project metadata
         let project = database::get_project(conn).map_err(|e| e.to_string())?;
         let title = project.title.clone();
         let author = project.author.clone();
-        
+
         // Get all chapters and scenes
         let chapters = database::list_chapters(conn).map_err(|e| e.to_string())?;
         let mut chapter_contents: Vec<layout::ChapterContent> = Vec::new();
-        
+
         for chapter in chapters {
             let scenes = database::list_scenes(conn, &chapter.id).map_err(|e| e.to_string())?;
             let mut scene_contents: Vec<layout::SceneContent> = Vec::new();
-            
+
             for scene in scenes {
-                let (content, _word_count) = database::get_scene_content(conn, &scene.id).map_err(|e| e.to_string())?;
+                let (content, _word_count) =
+                    database::get_scene_content(conn, &scene.id).map_err(|e| e.to_string())?;
                 scene_contents.push(layout::SceneContent {
                     title: scene.title,
                     content,
                 });
             }
-            
+
             chapter_contents.push(layout::ChapterContent {
                 title: chapter.title,
                 scenes: scene_contents,
             });
         }
-        
+
         // Get layout settings
         let settings = layout::get_layout_settings(conn)?;
-        
-        println!("[pdf-preview] Layout settings: page_width={}mm, page_height={}mm", settings.page_width, settings.page_height);
-        
+
+        println!(
+            "[pdf-preview] Layout settings: page_width={}mm, page_height={}mm",
+            settings.page_width, settings.page_height
+        );
+
         // Generate Typst content
-        let typst_content = layout::manuscript_to_typst(&chapter_contents, &settings, &title, &author);
-        
+        let typst_content =
+            layout::manuscript_to_typst(&chapter_contents, &settings, &title, &author);
+
         // Write to cache directory
         let cache_dir = app_handle
             .path_resolver()
@@ -3815,7 +4485,7 @@ fn open_pdf_preview_window(app_handle: tauri::AppHandle, state: State<AppState>)
         let preview_dir = cache_dir.join("preview");
         std::fs::create_dir_all(&preview_dir).map_err(|e| format!("mkdir failed: {e}"))?;
         let pdf_path = preview_dir.join("preview.pdf");
-        
+
         println!("[pdf-preview] Exporting to PDF: {:?}", pdf_path);
         match layout::export_to_pdf(&typst_content, &pdf_path) {
             Ok(_) => println!("[pdf-preview] PDF exported successfully"),
@@ -3824,12 +4494,12 @@ fn open_pdf_preview_window(app_handle: tauri::AppHandle, state: State<AppState>)
                 return Err(e);
             }
         }
-        
+
         pdf_path.to_string_lossy().to_string()
     };
-    
+
     println!("[pdf-preview] PDF path: {}", pdf_path);
-    
+
     // Open or focus the PDF preview window (separate from CSS preview)
     let win = if let Some(win) = app_handle.get_window("pdf-preview") {
         println!("[pdf-preview] Found existing PDF preview window, showing...");
@@ -3842,28 +4512,31 @@ fn open_pdf_preview_window(app_handle: tauri::AppHandle, state: State<AppState>)
         let url = tauri::WindowUrl::External("http://localhost:5173#/preview-pdf".parse().unwrap());
         #[cfg(not(debug_assertions))]
         let url = tauri::WindowUrl::App("index.html#/preview-pdf".into());
-        
+
         let win = tauri::WindowBuilder::new(&app_handle, "pdf-preview", url)
             .title("PDF-Vorschau (exakt)")
             .inner_size(1100.0, 850.0)
             .resizable(true)
             .build()
-            .map_err(|e| { 
+            .map_err(|e| {
                 println!("[pdf-preview] Window creation error: {}", e);
-                e.to_string() 
+                e.to_string()
             })?;
         println!("[pdf-preview] PDF preview window created successfully");
         win
     };
-    
+
     // Send the PDF path to the preview window after a short delay
     let pdf_path_clone = pdf_path.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_millis(500));
-        println!("[pdf-preview] Sending preview_refresh event with path: {}", pdf_path_clone);
+        println!(
+            "[pdf-preview] Sending preview_refresh event with path: {}",
+            pdf_path_clone
+        );
         let _ = win.emit("preview_refresh", pdf_path_clone);
     });
-    
+
     Ok(())
 }
 
@@ -3873,25 +4546,30 @@ fn export_manuscript_pdf(
     output_path: String,
     title: String,
     author: String,
-    state: State<AppState>
+    state: State<AppState>,
 ) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     let settings = layout::get_layout_settings(conn)?;
-    
-    let chapters: Vec<layout::ChapterContent> = chapters.into_iter().map(|c| {
-        layout::ChapterContent {
+
+    let chapters: Vec<layout::ChapterContent> = chapters
+        .into_iter()
+        .map(|c| layout::ChapterContent {
             title: c.title,
-            scenes: c.scenes.into_iter().map(|s| layout::SceneContent {
-                title: s.title,
-                content: s.content,
-            }).collect(),
-        }
-    }).collect();
-    
+            scenes: c
+                .scenes
+                .into_iter()
+                .map(|s| layout::SceneContent {
+                    title: s.title,
+                    content: s.content,
+                })
+                .collect(),
+        })
+        .collect();
+
     // Generate Typst content
     let typst_content = layout::manuscript_to_typst(&chapters, &settings, &title, &author);
-    
+
     // Export to PDF
     layout::export_to_pdf(&typst_content, std::path::Path::new(&output_path))
 }
@@ -3903,50 +4581,65 @@ fn export_manuscript_docx(
     title: String,
     author: String,
 ) -> Result<(), String> {
-    let chapters: Vec<layout::ChapterContent> = chapters.into_iter().map(|c| {
-        layout::ChapterContent {
+    let chapters: Vec<layout::ChapterContent> = chapters
+        .into_iter()
+        .map(|c| layout::ChapterContent {
             title: c.title,
-            scenes: c.scenes.into_iter().map(|s| layout::SceneContent {
-                title: s.title,
-                content: s.content,
-            }).collect(),
-        }
-    }).collect();
-    
-    layout::export_to_docx(&chapters, std::path::Path::new(&output_path), &title, &author)
+            scenes: c
+                .scenes
+                .into_iter()
+                .map(|s| layout::SceneContent {
+                    title: s.title,
+                    content: s.content,
+                })
+                .collect(),
+        })
+        .collect();
+
+    layout::export_to_docx(
+        &chapters,
+        std::path::Path::new(&output_path),
+        &title,
+        &author,
+    )
 }
 
 /// Export current project to PDF (loads data from DB)
 #[tauri::command]
-fn export_project_pdf(
-    output_path: String,
-    state: State<AppState>
-) -> Result<(), String> {
+fn export_project_pdf(output_path: String, state: State<AppState>) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    
+
     // Load project metadata
     let project = database::get_project(conn).map_err(|e| e.to_string())?;
     let settings = layout::get_layout_settings(conn)?;
-    
+
     // Load all chapters and scenes
     let db_chapters = database::list_chapters(conn).map_err(|e| e.to_string())?;
-    let chapters: Vec<layout::ChapterContent> = db_chapters.iter().map(|ch| {
-        let scenes = database::list_scenes(conn, &ch.id).unwrap_or_default();
-        layout::ChapterContent {
-            title: ch.title.clone(),
-            scenes: scenes.into_iter().map(|s| {
-                let (content, _wc) = database::get_scene_content(conn, &s.id).unwrap_or_default();
-                layout::SceneContent {
-                    title: s.title,
-                    content,
-                }
-            }).collect(),
-        }
-    }).collect();
-    
+    let chapters: Vec<layout::ChapterContent> = db_chapters
+        .iter()
+        .map(|ch| {
+            let scenes = database::list_scenes(conn, &ch.id).unwrap_or_default();
+            layout::ChapterContent {
+                title: ch.title.clone(),
+                scenes: scenes
+                    .into_iter()
+                    .map(|s| {
+                        let (content, _wc) =
+                            database::get_scene_content(conn, &s.id).unwrap_or_default();
+                        layout::SceneContent {
+                            title: s.title,
+                            content,
+                        }
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
+
     // Generate Typst content and export
-    let typst_content = layout::manuscript_to_typst(&chapters, &settings, &project.title, &project.author);
+    let typst_content =
+        layout::manuscript_to_typst(&chapters, &settings, &project.title, &project.author);
     layout::export_to_pdf(&typst_content, std::path::Path::new(&output_path))
 }
 
@@ -3955,117 +4648,162 @@ fn export_project_pdf(
 fn export_project_epub(
     output_path: String,
     cover_path: Option<String>,
-    state: State<AppState>
+    state: State<AppState>,
 ) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    
+
     // Load project metadata
     let project = database::get_project(conn).map_err(|e| e.to_string())?;
     let settings = layout::get_layout_settings(conn)?;
-    
+
     // Load all chapters and scenes
     let db_chapters = database::list_chapters(conn).map_err(|e| e.to_string())?;
-    let chapters: Vec<layout::ChapterContent> = db_chapters.iter().map(|ch| {
-        let scenes = database::list_scenes(conn, &ch.id).unwrap_or_default();
-        layout::ChapterContent {
-            title: ch.title.clone(),
-            scenes: scenes.into_iter().map(|s| {
-                let (content, _wc) = database::get_scene_content(conn, &s.id).unwrap_or_default();
-                layout::SceneContent {
-                    title: s.title,
-                    content,
-                }
-            }).collect(),
-        }
-    }).collect();
-    
-    layout::export_to_epub(&chapters, std::path::Path::new(&output_path), &project.title, &project.author, &settings, cover_path.as_deref())
+    let chapters: Vec<layout::ChapterContent> = db_chapters
+        .iter()
+        .map(|ch| {
+            let scenes = database::list_scenes(conn, &ch.id).unwrap_or_default();
+            layout::ChapterContent {
+                title: ch.title.clone(),
+                scenes: scenes
+                    .into_iter()
+                    .map(|s| {
+                        let (content, _wc) =
+                            database::get_scene_content(conn, &s.id).unwrap_or_default();
+                        layout::SceneContent {
+                            title: s.title,
+                            content,
+                        }
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
+
+    layout::export_to_epub(
+        &chapters,
+        std::path::Path::new(&output_path),
+        &project.title,
+        &project.author,
+        &settings,
+        cover_path.as_deref(),
+    )
 }
 
 /// Export current project to DOCX (loads data from DB)
 #[tauri::command]
-fn export_project_docx(
-    output_path: String,
-    state: State<AppState>
-) -> Result<(), String> {
+fn export_project_docx(output_path: String, state: State<AppState>) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    
+
     // Load project metadata
     let project = database::get_project(conn).map_err(|e| e.to_string())?;
-    
+
     // Load all chapters and scenes
     let db_chapters = database::list_chapters(conn).map_err(|e| e.to_string())?;
-    let chapters: Vec<layout::ChapterContent> = db_chapters.iter().map(|ch| {
-        let scenes = database::list_scenes(conn, &ch.id).unwrap_or_default();
-        layout::ChapterContent {
-            title: ch.title.clone(),
-            scenes: scenes.into_iter().map(|s| {
-                // Try to get content from content_json first (preserves paragraphs)
-                let content = match database::get_scene_content_with_json(conn, &s.id) {
-                    Ok((Some(json), _, _)) => {
-                        // Parse JSON and extract plain text with newlines
-                        if let Ok(doc) = serde_json::from_str::<featherworks_author::domain::doc::Node>(&json) {
-                            featherworks_author::domain::doc::to_plain_text(&doc)
-                        } else {
-                            database::get_scene_content(conn, &s.id).map(|(c, _)| c).unwrap_or_default()
+    let chapters: Vec<layout::ChapterContent> = db_chapters
+        .iter()
+        .map(|ch| {
+            let scenes = database::list_scenes(conn, &ch.id).unwrap_or_default();
+            layout::ChapterContent {
+                title: ch.title.clone(),
+                scenes: scenes
+                    .into_iter()
+                    .map(|s| {
+                        // Try to get content from content_json first (preserves paragraphs)
+                        let content = match database::get_scene_content_with_json(conn, &s.id) {
+                            Ok((Some(json), _, _)) => {
+                                // Parse JSON and extract plain text with newlines
+                                if let Ok(doc) = serde_json::from_str::<
+                                    featherworks_author::domain::doc::Node,
+                                >(&json)
+                                {
+                                    featherworks_author::domain::doc::to_plain_text(&doc)
+                                } else {
+                                    database::get_scene_content(conn, &s.id)
+                                        .map(|(c, _)| c)
+                                        .unwrap_or_default()
+                                }
+                            }
+                            _ => database::get_scene_content(conn, &s.id)
+                                .map(|(c, _)| c)
+                                .unwrap_or_default(),
+                        };
+                        layout::SceneContent {
+                            title: s.title,
+                            content,
                         }
-                    }
-                    _ => database::get_scene_content(conn, &s.id).map(|(c, _)| c).unwrap_or_default()
-                };
-                layout::SceneContent {
-                    title: s.title,
-                    content,
-                }
-            }).collect(),
-        }
-    }).collect();
-    
-    layout::export_to_docx(&chapters, std::path::Path::new(&output_path), &project.title, &project.author)
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
+
+    layout::export_to_docx(
+        &chapters,
+        std::path::Path::new(&output_path),
+        &project.title,
+        &project.author,
+    )
 }
 
 /// Export current project to InDesign-optimized XML (loads data from DB)
 #[tauri::command]
-fn export_project_indesign_xml(
-    output_path: String,
-    state: State<AppState>
-) -> Result<(), String> {
+fn export_project_indesign_xml(output_path: String, state: State<AppState>) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
-    
+
     // Load project metadata
     let project = database::get_project(conn).map_err(|e| e.to_string())?;
     let settings = layout::get_layout_settings(conn)?;
-    
+
     // Load all chapters and scenes
     let db_chapters = database::list_chapters(conn).map_err(|e| e.to_string())?;
-    let chapters: Vec<layout::ChapterContent> = db_chapters.iter().map(|ch| {
-        let scenes = database::list_scenes(conn, &ch.id).unwrap_or_default();
-        layout::ChapterContent {
-            title: ch.title.clone(),
-            scenes: scenes.into_iter().map(|s| {
-                // Try to get content from content_json first (preserves paragraphs)
-                let content = match database::get_scene_content_with_json(conn, &s.id) {
-                    Ok((Some(json), _, _)) => {
-                        // Parse JSON and extract plain text with newlines
-                        if let Ok(doc) = serde_json::from_str::<featherworks_author::domain::doc::Node>(&json) {
-                            featherworks_author::domain::doc::to_plain_text(&doc)
-                        } else {
-                            database::get_scene_content(conn, &s.id).map(|(c, _)| c).unwrap_or_default()
+    let chapters: Vec<layout::ChapterContent> = db_chapters
+        .iter()
+        .map(|ch| {
+            let scenes = database::list_scenes(conn, &ch.id).unwrap_or_default();
+            layout::ChapterContent {
+                title: ch.title.clone(),
+                scenes: scenes
+                    .into_iter()
+                    .map(|s| {
+                        // Try to get content from content_json first (preserves paragraphs)
+                        let content = match database::get_scene_content_with_json(conn, &s.id) {
+                            Ok((Some(json), _, _)) => {
+                                // Parse JSON and extract plain text with newlines
+                                if let Ok(doc) = serde_json::from_str::<
+                                    featherworks_author::domain::doc::Node,
+                                >(&json)
+                                {
+                                    featherworks_author::domain::doc::to_plain_text(&doc)
+                                } else {
+                                    database::get_scene_content(conn, &s.id)
+                                        .map(|(c, _)| c)
+                                        .unwrap_or_default()
+                                }
+                            }
+                            _ => database::get_scene_content(conn, &s.id)
+                                .map(|(c, _)| c)
+                                .unwrap_or_default(),
+                        };
+                        layout::SceneContent {
+                            title: s.title,
+                            content,
                         }
-                    }
-                    _ => database::get_scene_content(conn, &s.id).map(|(c, _)| c).unwrap_or_default()
-                };
-                layout::SceneContent {
-                    title: s.title,
-                    content,
-                }
-            }).collect(),
-        }
-    }).collect();
-    
-    layout::export_to_indesign_xml(&chapters, std::path::Path::new(&output_path), &project.title, &project.author, &settings)
+                    })
+                    .collect(),
+            }
+        })
+        .collect();
+
+    layout::export_to_indesign_xml(
+        &chapters,
+        std::path::Path::new(&output_path),
+        &project.title,
+        &project.author,
+        &settings,
+    )
 }
 
 #[tauri::command]
@@ -4075,17 +4813,27 @@ fn export_manuscript_rtf(
     title: String,
     author: String,
 ) -> Result<(), String> {
-    let chapters: Vec<layout::ChapterContent> = chapters.into_iter().map(|c| {
-        layout::ChapterContent {
+    let chapters: Vec<layout::ChapterContent> = chapters
+        .into_iter()
+        .map(|c| layout::ChapterContent {
             title: c.title,
-            scenes: c.scenes.into_iter().map(|s| layout::SceneContent {
-                title: s.title,
-                content: s.content,
-            }).collect(),
-        }
-    }).collect();
-    
-    layout::export_to_rtf(&chapters, std::path::Path::new(&output_path), &title, &author)
+            scenes: c
+                .scenes
+                .into_iter()
+                .map(|s| layout::SceneContent {
+                    title: s.title,
+                    content: s.content,
+                })
+                .collect(),
+        })
+        .collect();
+
+    layout::export_to_rtf(
+        &chapters,
+        std::path::Path::new(&output_path),
+        &title,
+        &author,
+    )
 }
 
 // ============================================================================
@@ -4093,42 +4841,58 @@ fn export_manuscript_rtf(
 // ============================================================================
 
 #[tauri::command]
-fn get_book_metadata(state: State<AppState>) -> Result<featherworks_author::models::BookMetadata, String> {
+fn get_book_metadata(
+    state: State<AppState>,
+) -> Result<featherworks_author::models::BookMetadata, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     database::get_book_metadata(conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn save_book_metadata(metadata: featherworks_author::models::BookMetadata, state: State<AppState>) -> Result<(), String> {
+fn save_book_metadata(
+    metadata: featherworks_author::models::BookMetadata,
+    state: State<AppState>,
+) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     database::update_book_metadata(conn, &metadata).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn list_editions(state: State<AppState>) -> Result<Vec<featherworks_author::models::Edition>, String> {
+fn list_editions(
+    state: State<AppState>,
+) -> Result<Vec<featherworks_author::models::Edition>, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     database::list_editions(conn).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn get_edition(edition_id: String, state: State<AppState>) -> Result<featherworks_author::models::Edition, String> {
+fn get_edition(
+    edition_id: String,
+    state: State<AppState>,
+) -> Result<featherworks_author::models::Edition, String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     database::get_edition(conn, &edition_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn create_edition(edition: featherworks_author::models::Edition, state: State<AppState>) -> Result<(), String> {
+fn create_edition(
+    edition: featherworks_author::models::Edition,
+    state: State<AppState>,
+) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     database::create_edition(conn, &edition).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-fn update_edition(edition: featherworks_author::models::Edition, state: State<AppState>) -> Result<(), String> {
+fn update_edition(
+    edition: featherworks_author::models::Edition,
+    state: State<AppState>,
+) -> Result<(), String> {
     let guard = state.db.lock().unwrap();
     let conn = guard.as_ref().ok_or("No project open")?;
     database::update_edition(conn, &edition).map_err(|e| e.to_string())
@@ -4140,7 +4904,6 @@ fn delete_edition(edition_id: String, state: State<AppState>) -> Result<(), Stri
     let conn = guard.as_ref().ok_or("No project open")?;
     database::delete_edition(conn, &edition_id).map_err(|e| e.to_string())
 }
-
 
 fn build_menu() -> Menu {
     // Read language preference from localStorage-synced file or default to English
@@ -4158,22 +4921,58 @@ fn build_menu() -> Menu {
     // Language menu
     let mut lang_de = CustomMenuItem::new("set_lang_de", "Deutsch");
     let mut lang_en = CustomMenuItem::new("set_lang_en", "English");
-    if is_german { lang_de = lang_de.disabled(); } else { lang_en = lang_en.disabled(); }
+    if is_german {
+        lang_de = lang_de.disabled();
+    } else {
+        lang_en = lang_en.disabled();
+    }
     let language_menu = Submenu::new(
         if is_german { "Sprache" } else { "Language" },
-        Menu::new()
-            .add_item(lang_de)
-            .add_item(lang_en)
+        Menu::new().add_item(lang_de).add_item(lang_en),
     );
-    
+
     // File menu items
-    let new_project = CustomMenuItem::new("new_project", if is_german { "Neues Projekt" } else { "New Project" }).accelerator("CmdOrCtrl+N");
-    let open_project = CustomMenuItem::new("open_project", if is_german { "Öffnen…" } else { "Open…" }).accelerator("CmdOrCtrl+O");
-    let save_project = CustomMenuItem::new("save", if is_german { "Speichern" } else { "Save" }).accelerator("CmdOrCtrl+S");
-    let save_as = CustomMenuItem::new("save_as", if is_german { "Speichern unter…" } else { "Save As…" }).accelerator("Shift+CmdOrCtrl+S");
-    let export_enc = CustomMenuItem::new("export_encrypted", if is_german { "Verschlüsselt exportieren…" } else { "Export Encrypted…" });
-    let import_enc = CustomMenuItem::new("import_encrypted", if is_german { "Verschlüsselt importieren…" } else { "Import Encrypted…" });
-    let close_project = CustomMenuItem::new("close", if is_german { "Schließen" } else { "Close" }).accelerator("CmdOrCtrl+W");
+    let new_project = CustomMenuItem::new(
+        "new_project",
+        if is_german {
+            "Neues Projekt"
+        } else {
+            "New Project"
+        },
+    )
+    .accelerator("CmdOrCtrl+N");
+    let open_project =
+        CustomMenuItem::new("open_project", if is_german { "Öffnen…" } else { "Open…" })
+            .accelerator("CmdOrCtrl+O");
+    let save_project = CustomMenuItem::new("save", if is_german { "Speichern" } else { "Save" })
+        .accelerator("CmdOrCtrl+S");
+    let save_as = CustomMenuItem::new(
+        "save_as",
+        if is_german {
+            "Speichern unter…"
+        } else {
+            "Save As…"
+        },
+    )
+    .accelerator("Shift+CmdOrCtrl+S");
+    let export_enc = CustomMenuItem::new(
+        "export_encrypted",
+        if is_german {
+            "Verschlüsselt exportieren…"
+        } else {
+            "Export Encrypted…"
+        },
+    );
+    let import_enc = CustomMenuItem::new(
+        "import_encrypted",
+        if is_german {
+            "Verschlüsselt importieren…"
+        } else {
+            "Import Encrypted…"
+        },
+    );
+    let close_project = CustomMenuItem::new("close", if is_german { "Schließen" } else { "Close" })
+        .accelerator("CmdOrCtrl+W");
 
     let file_menu = Submenu::new(
         if is_german { "Datei" } else { "File" },
@@ -4192,8 +4991,10 @@ fn build_menu() -> Menu {
     );
 
     // Edit menu items
-    let undo_item = CustomMenuItem::new("undo", if is_german { "Rückgängig" } else { "Undo" }).accelerator("CmdOrCtrl+Z");
-    let redo_item = CustomMenuItem::new("redo", if is_german { "Wiederholen" } else { "Redo" }).accelerator("Shift+CmdOrCtrl+Z");
+    let undo_item = CustomMenuItem::new("undo", if is_german { "Rückgängig" } else { "Undo" })
+        .accelerator("CmdOrCtrl+Z");
+    let redo_item = CustomMenuItem::new("redo", if is_german { "Wiederholen" } else { "Redo" })
+        .accelerator("Shift+CmdOrCtrl+Z");
 
     let edit_menu = Submenu::new(
         if is_german { "Bearbeiten" } else { "Edit" },
@@ -4206,14 +5007,54 @@ fn build_menu() -> Menu {
             .add_native_item(tauri::MenuItem::Paste)
             .add_native_item(tauri::MenuItem::SelectAll),
     );
-    
+
     // View menu items - Search & Replace
-    let find = CustomMenuItem::new("find", if is_german { "In Szene suchen" } else { "Find in Scene" }).accelerator("CmdOrCtrl+F");
-    let replace = CustomMenuItem::new("replace", if is_german { "In Szene ersetzen" } else { "Replace in Scene" }).accelerator("Alt+CmdOrCtrl+F");
-    let find_manuscript = CustomMenuItem::new("find_manuscript", if is_german { "Im Manuskript suchen" } else { "Find in Manuscript" }).accelerator("Shift+CmdOrCtrl+F");
-    let replace_manuscript = CustomMenuItem::new("replace_manuscript", if is_german { "Im Manuskript ersetzen" } else { "Replace in Manuscript" }).accelerator("Shift+Alt+CmdOrCtrl+F");
-    let toggle_fullscreen = CustomMenuItem::new("toggle_fullscreen", if is_german { "Vollbild umschalten" } else { "Toggle Fullscreen" }).accelerator("F11");
-    
+    let find = CustomMenuItem::new(
+        "find",
+        if is_german {
+            "In Szene suchen"
+        } else {
+            "Find in Scene"
+        },
+    )
+    .accelerator("CmdOrCtrl+F");
+    let replace = CustomMenuItem::new(
+        "replace",
+        if is_german {
+            "In Szene ersetzen"
+        } else {
+            "Replace in Scene"
+        },
+    )
+    .accelerator("Alt+CmdOrCtrl+F");
+    let find_manuscript = CustomMenuItem::new(
+        "find_manuscript",
+        if is_german {
+            "Im Manuskript suchen"
+        } else {
+            "Find in Manuscript"
+        },
+    )
+    .accelerator("Shift+CmdOrCtrl+F");
+    let replace_manuscript = CustomMenuItem::new(
+        "replace_manuscript",
+        if is_german {
+            "Im Manuskript ersetzen"
+        } else {
+            "Replace in Manuscript"
+        },
+    )
+    .accelerator("Shift+Alt+CmdOrCtrl+F");
+    let toggle_fullscreen = CustomMenuItem::new(
+        "toggle_fullscreen",
+        if is_german {
+            "Vollbild umschalten"
+        } else {
+            "Toggle Fullscreen"
+        },
+    )
+    .accelerator("F11");
+
     let view_menu = Submenu::new(
         if is_german { "Ansicht" } else { "View" },
         Menu::new()
@@ -4227,10 +5068,31 @@ fn build_menu() -> Menu {
     );
 
     // AI menu items (Fontaine)
-    let ai_settings = CustomMenuItem::new("ai_settings", if is_german { "KI-Einstellungen…" } else { "AI Settings…" });
-    let ai_connect_api = CustomMenuItem::new("ai_connect_api", if is_german { "Eigene API verbinden…" } else { "Connect Custom API…" });
-    let ai_local_model = CustomMenuItem::new("ai_local_model", if is_german { "Lokales Modell verwalten…" } else { "Manage Local Model…" });
-    
+    let ai_settings = CustomMenuItem::new(
+        "ai_settings",
+        if is_german {
+            "KI-Einstellungen…"
+        } else {
+            "AI Settings…"
+        },
+    );
+    let ai_connect_api = CustomMenuItem::new(
+        "ai_connect_api",
+        if is_german {
+            "Eigene API verbinden…"
+        } else {
+            "Connect Custom API…"
+        },
+    );
+    let ai_local_model = CustomMenuItem::new(
+        "ai_local_model",
+        if is_german {
+            "Lokales Modell verwalten…"
+        } else {
+            "Manage Local Model…"
+        },
+    );
+
     let ai_menu = Submenu::new(
         if is_german { "KI" } else { "AI" },
         Menu::new()
@@ -4241,12 +5103,47 @@ fn build_menu() -> Menu {
     );
 
     // Help menu items
-    let report_bug = CustomMenuItem::new("report_bug", if is_german { "Fehler melden…" } else { "Report Bug…" });
-    let send_feedback = CustomMenuItem::new("send_feedback", if is_german { "Feedback senden…" } else { "Send Feedback…" });
-    let visit_website = CustomMenuItem::new("visit_website", if is_german { "Webseite besuchen" } else { "Visit Website" });
-    let view_logs = CustomMenuItem::new("view_logs", if is_german { "Log-Dateien öffnen" } else { "Open Log Files" });
-    let about_app = CustomMenuItem::new("about_app", if is_german { "Über FeatherWorks Author" } else { "About FeatherWorks Author" });
-    
+    let report_bug = CustomMenuItem::new(
+        "report_bug",
+        if is_german {
+            "Fehler melden…"
+        } else {
+            "Report Bug…"
+        },
+    );
+    let send_feedback = CustomMenuItem::new(
+        "send_feedback",
+        if is_german {
+            "Feedback senden…"
+        } else {
+            "Send Feedback…"
+        },
+    );
+    let visit_website = CustomMenuItem::new(
+        "visit_website",
+        if is_german {
+            "Webseite besuchen"
+        } else {
+            "Visit Website"
+        },
+    );
+    let view_logs = CustomMenuItem::new(
+        "view_logs",
+        if is_german {
+            "Log-Dateien öffnen"
+        } else {
+            "Open Log Files"
+        },
+    );
+    let about_app = CustomMenuItem::new(
+        "about_app",
+        if is_german {
+            "Über FeatherWorks Author"
+        } else {
+            "About FeatherWorks Author"
+        },
+    );
+
     let help_menu = Submenu::new(
         if is_german { "Hilfe" } else { "Help" },
         Menu::new()
@@ -4321,7 +5218,13 @@ fn main() {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(AppState { db: Default::default(), db_path: Default::default(), container_path: Default::default(), db_is_temp: Default::default(), journal_path: Default::default() })
+        .manage(AppState {
+            db: Default::default(),
+            db_path: Default::default(),
+            container_path: Default::default(),
+            db_is_temp: Default::default(),
+            journal_path: Default::default(),
+        })
         .menu(build_menu())
         .on_window_event(|event| {
             // Log a concise line for each significant window event to help diagnose unexpected closes/blank screen
@@ -4330,10 +5233,14 @@ pub fn run() {
                     println!("[window-event] CloseRequested received - allowing normal close");
                 }
                 WindowEvent::Destroyed => println!("[window-event] Window destroyed"),
-                WindowEvent::Focused(f) => println!("[window-event] Focused={}" , f),
-                WindowEvent::ScaleFactorChanged { scale_factor, .. } => println!("[window-event] ScaleFactorChanged {scale_factor}"),
+                WindowEvent::Focused(f) => println!("[window-event] Focused={}", f),
+                WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                    println!("[window-event] ScaleFactorChanged {scale_factor}")
+                }
                 WindowEvent::ThemeChanged(t) => println!("[window-event] ThemeChanged {:?}", t),
-                WindowEvent::Resized(size) => println!("[window-event] Resized {}x{}", size.width, size.height),
+                WindowEvent::Resized(size) => {
+                    println!("[window-event] Resized {}x{}", size.width, size.height)
+                }
                 WindowEvent::Moved(pos) => println!("[window-event] Moved {}x{}", pos.x, pos.y),
                 WindowEvent::FileDrop(ev) => println!("[window-event] FileDrop event: {:?}", ev),
                 _ => { /* ignore noisy events */ }
@@ -4344,8 +5251,14 @@ pub fn run() {
             let menu_id = event.menu_item_id();
             println!("[menu-event] Menu clicked: {}", menu_id);
             match menu_id {
-                "new_project" => { println!("[menu-event] Emitting menu_new_project"); window.emit("menu_new_project", ()).unwrap(); },
-                "open_project" => { println!("[menu-event] Emitting menu_open_project"); window.emit("menu_open_project", ()).unwrap(); },
+                "new_project" => {
+                    println!("[menu-event] Emitting menu_new_project");
+                    window.emit("menu_new_project", ()).unwrap();
+                }
+                "open_project" => {
+                    println!("[menu-event] Emitting menu_open_project");
+                    window.emit("menu_open_project", ()).unwrap();
+                }
                 "save" => window.emit("menu_save", ()).unwrap(),
                 "save_as" => window.emit("menu_save_as", ()).unwrap(),
                 "close" => window.emit("menu_close", ()).unwrap(),
@@ -4365,12 +5278,14 @@ pub fn run() {
                 // Help menu events
                 "report_bug" => window.emit("menu_report_bug", ()).unwrap(),
                 "send_feedback" => window.emit("menu_send_feedback", ()).unwrap(),
-                "visit_website" => { let _ = open::that("https://featherworks.app"); },
+                "visit_website" => {
+                    let _ = open::that("https://featherworks.app");
+                }
                 "view_logs" => {
                     if let Some(log_dir) = window.app_handle().path_resolver().app_log_dir() {
                         let _ = open::that(log_dir);
                     }
-                },
+                }
                 "about_app" => window.emit("menu_about", ()).unwrap(),
                 // Language
                 "set_lang_de" => window.emit("request-language-change", "de").unwrap(),
@@ -4408,176 +5323,169 @@ pub fn run() {
             undo_scene,
             redo_scene,
             check_recovery,
-            apply_recovery
-            , start_ai_chat
-            , cancel_ai_chat
-            , build_fontaine_context
-            , set_active_ai_provider
-            , auto_paragraph_scene
-            , check_ai_available
-            , set_ai_model
-            , get_ai_model
-            , list_ai_models
-            , get_ai_model_progress
-            , load_ai_model
-            , get_ai_model_state
-            , get_ai_settings
-            , save_ai_settings_cmd
-            // Hardware detection & model registry
-            , detect_hardware
-            , list_model_registry
-            , check_model_exists
-            // Model download
-            , start_model_download
-            , get_download_progress
-            , cancel_model_download
-            , is_model_available
-            , get_models_with_status
-            , delete_downloaded_model
-            , spell_check
-            , spell_suggest
-            , spell_add_word
-            , languagetool_check
-            , languagetool_test
-            , check_for_update
-            , install_update
-            , get_app_version
-            , restart_app
-            , get_app_language
-            , set_app_language
-            // User Profile
-            , get_user_profile
-            , save_user_profile
-            , get_pacing_settings
-            , save_pacing_settings
-            , update_library_project
-            , remove_from_library
-            , list_series
-            , list_genres
-            , list_tags
-            // Entity System
-            , list_entity_types
-            , create_entity_type
-            , update_entity_type
-            , update_entity_type_schema
-            , delete_entity_type
-            , list_entities
-            , get_entity
-            , create_entity
-            , update_entity
-            , delete_entity
-            , get_entity_highlights
-            // Entity Images
-            , list_entity_images
-            , get_entity_image
-            , add_entity_image
-            , update_entity_image_name
-            , delete_entity_image
-            // AI Provider Settings
-            , get_ai_provider_settings
-            , save_ai_provider_settings
-            , test_ai_provider_connection
-            // RAG Documents
-            , list_rag_documents
-            , import_rag_document
-            , remove_rag_document
-            , clear_all_rag_data
-            // Plot System
-            , list_subplots
-            , create_subplot
-            , update_subplot
-            , delete_subplot
-            , reorder_subplots
-            , list_plot_points
-            , create_plot_point
-            , update_plot_point
-            , delete_plot_point
-            , move_plot_point
-            , reorder_plot_points
-            , link_scene_to_plot
-            , unlink_scene_from_plot
-            , get_scenes_for_plot_point
-            , get_plot_points_for_scene
-            // Research System
-            , list_research_folders
-            , create_research_folder
-            , update_research_folder
-            , move_research_folder
-            , delete_research_folder
-            , list_research_items
-            , create_research_item
-            , create_research_file
-            , get_research_file_data
-            , update_research_item
-            , move_research_item
-            , delete_research_item
-            , save_research_extracted_facts
-            , search_research
-            // Layout & Export
-            , get_layout_settings
-            , save_layout_settings
-            , list_layout_presets
-            , save_layout_preset
-            , delete_layout_preset
-            , export_manuscript_pdf
-            , export_manuscript_epub
-            , export_manuscript_docx
-            , export_manuscript_rtf
-            , export_project_pdf
-            , export_project_epub
-            , export_project_docx
-            , export_project_indesign_xml
-            , render_preview_pdf
-            , open_preview_window
-            , open_pdf_preview_window
-            // Book Metadata & Editions
-            , get_book_metadata
-            , save_book_metadata
-            , list_editions
-            , get_edition
-            , create_edition
-            , update_edition
-            , delete_edition
-            // AI Entity Extraction & Lektorat
-            , extract_entities_ai
-            , extract_entities_scene_upsert
-            , extract_entities_manuscript_upsert
-            , analyze_lektorat_ai
-            , analyze_lektorat_chunked
-            , save_extracted_entity
-            // Auto-Summarization
-            , auto_summarize_scene
-            , auto_summarize_chapter
-            , get_scene_summary
-            , get_chapter_summary
-            , get_all_chapter_summaries
-            // AI Queue & Background Jobs
-            , get_ai_queue_stats
-            , list_background_jobs
-            , get_background_job_status
-            , cancel_background_job
-            , start_entity_scan
-            , start_summarize_all_scenes
-            // Lektorat Annotations Persistence
-            , save_lektorat_annotations
-            , load_lektorat_annotations
-            , dismiss_lektorat_annotation
-            , clear_scene_lektorat
-            // Support & Bug Reports
-            , submit_bug_report
-            , get_system_info
-            , open_support_page
+            apply_recovery,
+            start_ai_chat,
+            cancel_ai_chat,
+            build_fontaine_context,
+            set_active_ai_provider,
+            auto_paragraph_scene,
+            check_ai_available,
+            set_ai_model,
+            get_ai_model,
+            list_ai_models,
+            get_ai_model_progress,
+            get_ai_server_status,
+            stop_ai_server,
+            load_ai_model,
+            get_ai_model_state,
+            get_ai_settings,
+            save_ai_settings_cmd, // Hardware detection & model registry
+            detect_hardware,
+            list_model_registry,
+            check_model_exists, // Model download
+            start_model_download,
+            get_download_progress,
+            cancel_model_download,
+            is_model_available,
+            get_models_with_status,
+            delete_downloaded_model,
+            spell_check,
+            spell_suggest,
+            spell_add_word,
+            languagetool_check,
+            languagetool_test,
+            check_for_update,
+            install_update,
+            get_app_version,
+            restart_app,
+            get_app_language,
+            set_app_language, // User Profile
+            get_user_profile,
+            save_user_profile,
+            get_pacing_settings,
+            save_pacing_settings,
+            update_library_project,
+            remove_from_library,
+            list_series,
+            list_genres,
+            list_tags, // Entity System
+            list_entity_types,
+            create_entity_type,
+            update_entity_type,
+            update_entity_type_schema,
+            delete_entity_type,
+            list_entities,
+            get_entity,
+            create_entity,
+            update_entity,
+            delete_entity,
+            get_entity_highlights, // Entity Images
+            list_entity_images,
+            get_entity_image,
+            add_entity_image,
+            update_entity_image_name,
+            delete_entity_image, // AI Provider Settings
+            get_ai_provider_settings,
+            save_ai_provider_settings,
+            test_ai_provider_connection, // RAG Documents
+            list_rag_documents,
+            import_rag_document,
+            remove_rag_document,
+            clear_all_rag_data, // Plot System
+            list_subplots,
+            create_subplot,
+            update_subplot,
+            delete_subplot,
+            reorder_subplots,
+            list_plot_points,
+            create_plot_point,
+            update_plot_point,
+            delete_plot_point,
+            move_plot_point,
+            reorder_plot_points,
+            link_scene_to_plot,
+            unlink_scene_from_plot,
+            get_scenes_for_plot_point,
+            get_plot_points_for_scene, // Research System
+            list_research_folders,
+            create_research_folder,
+            update_research_folder,
+            move_research_folder,
+            delete_research_folder,
+            list_research_items,
+            create_research_item,
+            create_research_file,
+            get_research_file_data,
+            update_research_item,
+            move_research_item,
+            delete_research_item,
+            save_research_extracted_facts,
+            search_research, // Layout & Export
+            get_layout_settings,
+            save_layout_settings,
+            list_layout_presets,
+            save_layout_preset,
+            delete_layout_preset,
+            export_manuscript_pdf,
+            export_manuscript_epub,
+            export_manuscript_docx,
+            export_manuscript_rtf,
+            export_project_pdf,
+            export_project_epub,
+            export_project_docx,
+            export_project_indesign_xml,
+            render_preview_pdf,
+            open_preview_window,
+            open_pdf_preview_window, // Book Metadata & Editions
+            get_book_metadata,
+            save_book_metadata,
+            list_editions,
+            get_edition,
+            create_edition,
+            update_edition,
+            delete_edition, // AI Entity Extraction & Lektorat
+            extract_entities_ai,
+            extract_entities_scene_upsert,
+            extract_entities_manuscript_upsert,
+            analyze_lektorat_ai,
+            analyze_lektorat_chunked,
+            save_extracted_entity, // Auto-Summarization
+            auto_summarize_scene,
+            auto_summarize_chapter,
+            get_scene_summary,
+            get_chapter_summary,
+            get_all_chapter_summaries, // AI Queue & Background Jobs
+            get_ai_queue_stats,
+            list_background_jobs,
+            get_background_job_status,
+            cancel_background_job,
+            start_entity_scan,
+            start_summarize_all_scenes, // Lektorat Annotations Persistence
+            save_lektorat_annotations,
+            load_lektorat_annotations,
+            dismiss_lektorat_annotation,
+            clear_scene_lektorat, // Support & Bug Reports
+            submit_bug_report,
+            get_system_info,
+            open_support_page
         ])
         .setup(|app| {
             let handle = app.handle();
             setup_logging(&handle)?;
-            
+
             // Initialize AI Queue Worker
             ai::queue::init_queue_worker();
             log::info!("[setup] AI Queue Worker initialized");
-            
+
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            // The MLX server holds several GB of wired memory. Without an
+            // explicit kill it survives the app and strands that memory.
+            if let tauri::RunEvent::ExitRequested { .. } = event {
+                ai::server::stop();
+            }
+        });
 }

@@ -1,12 +1,12 @@
 //! Document Text Extraction Module
-//! 
+//!
 //! Extracts text from various document formats:
 //! - PDF (via pdf-extract)
 //! - DOCX (via docx-rs)
 //! - TXT, MD (plain text)
 
-use std::path::Path;
 use std::fs;
+use std::path::Path;
 
 /// Result of document extraction
 #[derive(Debug)]
@@ -26,34 +26,32 @@ pub struct ExtractedDocument {
 /// Extract text from a document file
 pub fn extract_text(path: &str) -> Result<ExtractedDocument, String> {
     let file_path = Path::new(path);
-    
+
     let file_name = file_path
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("Unknown")
         .to_string();
-    
+
     let extension = file_path
         .extension()
         .and_then(|e| e.to_str())
         .unwrap_or("")
         .to_lowercase();
-    
-    let file_size = fs::metadata(path)
-        .map(|m| m.len())
-        .unwrap_or(0);
-    
+
+    let file_size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+
     let (content, page_count) = match extension.as_str() {
         "txt" | "md" => {
-            let text = fs::read_to_string(path)
-                .map_err(|e| format!("Failed to read text file: {}", e))?;
+            let text =
+                fs::read_to_string(path).map_err(|e| format!("Failed to read text file: {}", e))?;
             (text, None)
         }
         "pdf" => extract_pdf(path)?,
         "docx" => extract_docx(path)?,
         _ => return Err(format!("Unsupported file type: {}", extension)),
     };
-    
+
     Ok(ExtractedDocument {
         content,
         file_name,
@@ -77,7 +75,10 @@ fn extract_pdf(path: &str) -> Result<(String, Option<usize>), String> {
         Err(e) => {
             // Fallback: return error message as content
             log::warn!("PDF extraction failed: {}", e);
-            Err(format!("PDF-Extraktion fehlgeschlagen: {}. Bitte als TXT exportieren.", e))
+            Err(format!(
+                "PDF-Extraktion fehlgeschlagen: {}. Bitte als TXT exportieren.",
+                e
+            ))
         }
     }
 }
@@ -86,13 +87,12 @@ fn extract_pdf(path: &str) -> Result<(String, Option<usize>), String> {
 fn extract_docx(path: &str) -> Result<(String, Option<usize>), String> {
     use std::io::Read;
     use zip::ZipArchive;
-    
-    let file = std::fs::File::open(path)
-        .map_err(|e| format!("Failed to open DOCX: {}", e))?;
-    
-    let mut archive = ZipArchive::new(file)
-        .map_err(|e| format!("Failed to read DOCX archive: {}", e))?;
-    
+
+    let file = std::fs::File::open(path).map_err(|e| format!("Failed to open DOCX: {}", e))?;
+
+    let mut archive =
+        ZipArchive::new(file).map_err(|e| format!("Failed to read DOCX archive: {}", e))?;
+
     // Read document.xml from the archive
     let mut document_xml = String::new();
     if let Ok(mut file) = archive.by_name("word/document.xml") {
@@ -101,14 +101,14 @@ fn extract_docx(path: &str) -> Result<(String, Option<usize>), String> {
     } else {
         return Err("DOCX does not contain word/document.xml".to_string());
     }
-    
+
     // Simple XML text extraction - find all text content between <w:t> tags
     let text = extract_text_from_xml(&document_xml);
     let cleaned = clean_extracted_text(&text);
-    
+
     // Estimate page count
     let page_count = Some((cleaned.len() / 3000).max(1));
-    
+
     Ok((cleaned, page_count))
 }
 
@@ -118,7 +118,7 @@ fn extract_text_from_xml(xml: &str) -> String {
     let mut in_text_tag = false;
     let mut current_text = String::new();
     let mut chars = xml.chars().peekable();
-    
+
     while let Some(c) = chars.next() {
         if c == '<' {
             // Start of tag
@@ -130,7 +130,7 @@ fn extract_text_from_xml(xml: &str) -> String {
                 }
                 tag.push(chars.next().unwrap());
             }
-            
+
             // Check tag type
             if tag.starts_with("w:p") && !tag.starts_with("w:pPr") {
                 // Paragraph start - add newline
@@ -158,7 +158,7 @@ fn extract_text_from_xml(xml: &str) -> String {
             current_text.push(c);
         }
     }
-    
+
     result
 }
 
@@ -168,7 +168,7 @@ fn clean_extracted_text(text: &str) -> String {
     let mut result = String::with_capacity(text.len());
     let mut prev_was_newline = false;
     let mut prev_was_space = false;
-    
+
     for c in text.chars() {
         match c {
             '\n' | '\r' => {
@@ -191,14 +191,14 @@ fn clean_extracted_text(text: &str) -> String {
             }
         }
     }
-    
+
     result.trim().to_string()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_clean_text() {
         let dirty = "Hello   \n\n\n  World  \t\t  Test";

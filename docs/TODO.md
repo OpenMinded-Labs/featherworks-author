@@ -27,7 +27,9 @@ Details, Messwerte und verifizierte Fallstricke: **`docs/LLM-STATUS.md`**
 - [ ] **KV-Cache auf 4 Bit quantisieren** (Speicher bei langen Kontexten)
 - [ ] **Agenting** — autonomes Arbeiten, User-Interrupts (Vorbild: Ailey)
 - [ ] Icons auf Lucide umstellen
-- [ ] Python-Runtime beim Kunden (Release-Blocker)
+- [ ] **Embedded Python ins Bundle** — fällig vor Closed Alpha, nicht vorher
+      (`mlx-rs` geprüft und verworfen: kein Gemma-4-Support, seit 5 Monaten
+      ruhend; Details in LLM-STATUS.md 3b)
 
 ---
 

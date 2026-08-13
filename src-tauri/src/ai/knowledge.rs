@@ -1,5 +1,5 @@
 //! Global Knowledge Base for Fontaine AI
-//! 
+//!
 //! Diese Wissensdatenbank enthält Artikel zu:
 //! - Fontaine Identität und Fähigkeiten
 //! - App-Bedienung (FeatherWorks Author)
@@ -592,53 +592,75 @@ KnowledgeArticle {
     content: "Der Erzaehler vermittelt keine objektive Wahrheit - absichtlich oder unbewusst. Typen: Luegner (weiss, dass er taeuscht), Naiv (versteht nicht alles), Wahnsinnig (verzerrte Wahrnehmung), Verdraengend (unterdrueckt Wahrheit). Hinweise pflanzen: Kleine Inkonsistenzen, andere Figuren reagieren anders als erwartet, der Leser ahnt es. Enthuellung: Kann explizit sein (grosser Twist) oder implizit (Leser muss selbst schliessen). Reread Value: Das Buch wird beim zweiten Lesen anders. Klassiker: Gone Girl, Fight Club, Rebecca. Risiko: Leser fuehlt sich betrogen wenn zu unfair. Es muessen genug Hinweise da sein. Genres: Thriller, Literary Fiction, Psychological Drama. Technik: Erste Person ist klassisch, aber dritte Person limited funktioniert auch. Fehler: Twist kommt aus dem Nichts, Unzuverlaessigkeit hat keinen thematischen Sinn, Charakter taeuscht auch ueber belanglose Dinge.",
 },
     ];
-    
+
     pub fn new() -> Self {
-        Self { articles: Self::ARTICLES.to_vec() }
+        Self {
+            articles: Self::ARTICLES.to_vec(),
+        }
     }
-    
+
     pub fn search(&self, query: &str, limit: usize) -> Vec<&KnowledgeArticle> {
         let query_lower = query.to_lowercase();
         let query_words: Vec<&str> = query_lower.split_whitespace().collect();
-        
-        let mut scored: Vec<(&KnowledgeArticle, i32)> = self.articles
+
+        let mut scored: Vec<(&KnowledgeArticle, i32)> = self
+            .articles
             .iter()
             .filter_map(|article| {
                 let score = Self::score_article(article, &query_words);
-                if score > 0 { Some((article, score)) } else { None }
+                if score > 0 {
+                    Some((article, score))
+                } else {
+                    None
+                }
             })
             .collect();
-        
+
         scored.sort_by(|a, b| b.1.cmp(&a.1));
         scored.into_iter().take(limit).map(|(a, _)| a).collect()
     }
-    
+
     fn score_article(article: &KnowledgeArticle, query_words: &[&str]) -> i32 {
         let mut score = 0;
         for word in query_words {
             for keyword in article.keywords {
-                if keyword.contains(word) || word.contains(keyword) { score += 10; }
+                if keyword.contains(word) || word.contains(keyword) {
+                    score += 10;
+                }
             }
-            if article.title.to_lowercase().contains(word) { score += 5; }
-            if article.content.to_lowercase().contains(word) { score += 1; }
+            if article.title.to_lowercase().contains(word) {
+                score += 5;
+            }
+            if article.content.to_lowercase().contains(word) {
+                score += 1;
+            }
         }
         score
     }
-    
+
     pub fn by_category(&self, category: KnowledgeCategory) -> Vec<&KnowledgeArticle> {
-        self.articles.iter().filter(|a| std::mem::discriminant(&a.category) == std::mem::discriminant(&category)).collect()
+        self.articles
+            .iter()
+            .filter(|a| std::mem::discriminant(&a.category) == std::mem::discriminant(&category))
+            .collect()
     }
-    
+
     pub fn get(&self, id: &str) -> Option<&KnowledgeArticle> {
         self.articles.iter().find(|a| a.id == id)
     }
-    
-    pub fn len(&self) -> usize { self.articles.len() }
-    pub fn is_empty(&self) -> bool { self.articles.is_empty() }
+
+    pub fn len(&self) -> usize {
+        self.articles.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.articles.is_empty()
+    }
 }
 
 impl Default for KnowledgeBase {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Convert ASCII-safe text back to proper German umlauts
@@ -656,13 +678,16 @@ fn restore_umlauts(text: &str) -> String {
 pub fn format_for_context(article: &KnowledgeArticle, max_chars: usize) -> String {
     // Restore umlauts from ASCII-safe storage
     let content_with_umlauts = restore_umlauts(article.content);
-    
+
     let content = if content_with_umlauts.len() > max_chars {
-        format!("{}...", &content_with_umlauts[..max_chars.min(content_with_umlauts.len())])
+        format!(
+            "{}...",
+            &content_with_umlauts[..max_chars.min(content_with_umlauts.len())]
+        )
     } else {
         content_with_umlauts
     };
-    
+
     // Add instruction for AI to paraphrase, not quote directly
     format!("[Wissen zu {}]\n{}", article.title, content.trim())
 }

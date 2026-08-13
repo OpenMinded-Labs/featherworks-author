@@ -24,38 +24,38 @@ pub struct Project {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Edition {
     pub id: String,
-    pub name: String,  // z.B. "E-Book (Kindle)", "Taschenbuch", "Hardcover"
-    
+    pub name: String, // z.B. "E-Book (Kindle)", "Taschenbuch", "Hardcover"
+
     #[serde(rename = "editionType")]
     pub edition_type: EditionType,
-    
+
     // Format-specific ISBN
     #[serde(default)]
     pub isbn: Option<String>,
     #[serde(rename = "isbn13")]
     #[serde(default)]
     pub isbn_13: Option<String>,
-    
+
     // ASIN for Kindle
     #[serde(default)]
     pub asin: Option<String>,
-    
+
     // Pricing
     #[serde(default)]
     pub price: Option<f64>,
     #[serde(default)]
     pub currency: Option<String>,
-    
+
     // Layout preset for this edition
     #[serde(rename = "layoutPresetId")]
     #[serde(default)]
     pub layout_preset_id: Option<String>,
-    
+
     // Edition-specific layout overrides (optional)
     #[serde(rename = "layoutOverrides")]
     #[serde(default)]
     pub layout_overrides: Option<EditionLayoutOverrides>,
-    
+
     // Edition-specific content differences
     #[serde(rename = "includeAboutAuthor")]
     #[serde(default = "default_true")]
@@ -65,41 +65,41 @@ pub struct Edition {
     pub include_also_by: bool,
     #[serde(rename = "includePreview")]
     #[serde(default)]
-    pub include_preview: bool,  // Preview of next book (common in e-books)
+    pub include_preview: bool, // Preview of next book (common in e-books)
     #[serde(rename = "previewChapterId")]
     #[serde(default)]
     pub preview_chapter_id: Option<String>,
-    
+
     // E-Book specific
     #[serde(rename = "ebookCoverPath")]
     #[serde(default)]
-    pub ebook_cover_path: Option<String>,  // Different resolution for e-books
-    
+    pub ebook_cover_path: Option<String>, // Different resolution for e-books
+
     // Print specific
     #[serde(rename = "printCoverPath")]
     #[serde(default)]
-    pub print_cover_path: Option<String>,  // Full wrap cover with spine
+    pub print_cover_path: Option<String>, // Full wrap cover with spine
     #[serde(rename = "spineWidth")]
     #[serde(default)]
-    pub spine_width: Option<f64>,  // in mm, calculated from page count
+    pub spine_width: Option<f64>, // in mm, calculated from page count
     #[serde(rename = "bleed")]
     #[serde(default)]
-    pub bleed: Option<f64>,  // in mm, typically 3mm for print
-    
+    pub bleed: Option<f64>, // in mm, typically 3mm for print
+
     // Distribution
     #[serde(default)]
-    pub distributor: Option<String>,  // KDP, IngramSpark, BoD, etc.
+    pub distributor: Option<String>, // KDP, IngramSpark, BoD, etc.
     #[serde(rename = "distributorId")]
     #[serde(default)]
     pub distributor_id: Option<String>,
-    
+
     // Status
     #[serde(default = "default_false")]
     pub published: bool,
     #[serde(rename = "publishDate")]
     #[serde(default)]
     pub publish_date: Option<String>,
-    
+
     #[serde(rename = "createdAt")]
     #[serde(default)]
     pub created_at: Option<String>,
@@ -139,7 +139,7 @@ pub struct EditionLayoutOverrides {
     #[serde(rename = "pageHeight")]
     #[serde(default)]
     pub page_height: Option<f64>,
-    
+
     // Margins
     #[serde(rename = "marginTop")]
     #[serde(default)]
@@ -153,7 +153,7 @@ pub struct EditionLayoutOverrides {
     #[serde(rename = "marginOuter")]
     #[serde(default)]
     pub margin_outer: Option<f64>,
-    
+
     // Typography
     #[serde(rename = "fontFamily")]
     #[serde(default)]
@@ -164,11 +164,11 @@ pub struct EditionLayoutOverrides {
     #[serde(rename = "lineHeight")]
     #[serde(default)]
     pub line_height: Option<f64>,
-    
+
     // Large print specific
     #[serde(rename = "largePrintFontSize")]
     #[serde(default)]
-    pub large_print_font_size: Option<f64>,  // typically 16-18pt
+    pub large_print_font_size: Option<f64>, // typically 16-18pt
 }
 
 // ============================================================
@@ -185,7 +185,7 @@ pub struct BookMetadata {
     #[serde(rename = "authorBio")]
     #[serde(default)]
     pub author_bio: Option<String>,
-    
+
     // Publishing info (default, can be overridden per edition)
     #[serde(default)]
     pub publisher: Option<String>,
@@ -193,10 +193,10 @@ pub struct BookMetadata {
     #[serde(default)]
     pub publish_date: Option<String>,
     #[serde(default)]
-    pub edition: Option<String>,  // "1. Auflage", etc.
+    pub edition: Option<String>, // "1. Auflage", etc.
     #[serde(default)]
     pub language: Option<String>,
-    
+
     // Copyright
     #[serde(rename = "copyrightYear")]
     #[serde(default)]
@@ -210,7 +210,7 @@ pub struct BookMetadata {
     #[serde(rename = "allRightsReserved")]
     #[serde(default = "default_true")]
     pub all_rights_reserved: bool,
-    
+
     // Front matter content
     #[serde(default)]
     pub dedication: Option<String>,
@@ -230,7 +230,7 @@ pub struct BookMetadata {
     pub preface: Option<String>,
     #[serde(default)]
     pub introduction: Option<String>,
-    
+
     // Back matter content
     #[serde(rename = "aboutAuthor")]
     #[serde(default)]
@@ -238,7 +238,7 @@ pub struct BookMetadata {
     #[serde(rename = "alsoByAuthor")]
     #[serde(default)]
     pub also_by_author: Option<Vec<String>>,
-    
+
     // Series info
     #[serde(rename = "seriesName")]
     #[serde(default)]
@@ -246,7 +246,7 @@ pub struct BookMetadata {
     #[serde(rename = "seriesNumber")]
     #[serde(default)]
     pub series_number: Option<i32>,
-    
+
     // Cover (master/source files)
     #[serde(rename = "coverImagePath")]
     #[serde(default)]
@@ -254,21 +254,25 @@ pub struct BookMetadata {
     #[serde(rename = "coverDesigner")]
     #[serde(default)]
     pub cover_designer: Option<String>,
-    
+
     // Categories / Keywords for distribution
     #[serde(default)]
-    pub categories: Option<Vec<String>>,  // BISAC codes
+    pub categories: Option<Vec<String>>, // BISAC codes
     #[serde(default)]
-    pub keywords: Option<Vec<String>>,    // For Amazon, etc.
+    pub keywords: Option<Vec<String>>, // For Amazon, etc.
     #[serde(default)]
-    pub description: Option<String>,       // Book blurb
+    pub description: Option<String>, // Book blurb
     #[serde(rename = "shortDescription")]
     #[serde(default)]
     pub short_description: Option<String>, // 150 chars for some platforms
 }
 
-fn default_true() -> bool { true }
-fn default_false() -> bool { false }
+fn default_true() -> bool {
+    true
+}
+fn default_false() -> bool {
+    false
+}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Chapter {

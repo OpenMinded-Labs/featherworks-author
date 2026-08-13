@@ -22,3 +22,6 @@ dist/
 .env
 .env.local
 featherworks-author-web/node_modules/
+
+# Messartefakte der bench_*/verify_* Skripte
+scripts/*_results.json

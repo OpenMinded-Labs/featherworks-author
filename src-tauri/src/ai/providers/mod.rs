@@ -1,5 +1,5 @@
 //! LLM Provider Abstraction Layer
-//! 
+//!
 //! Unified interface for different LLM backends:
 //! - Local (MLX on Apple Silicon, llama.cpp on Windows/Linux)
 //! - Claude (Anthropic API)
@@ -29,7 +29,7 @@ impl ProviderType {
             ProviderType::OpenAI => "OpenAI (GPT)",
         }
     }
-    
+
     pub fn requires_api_key(&self) -> bool {
         match self {
             ProviderType::Local => false,
@@ -81,22 +81,22 @@ pub type TokenCallback = Box<dyn Fn(String) + Send + Sync>;
 pub trait LlmProvider: Send + Sync {
     /// Get provider display name
     fn name(&self) -> &str;
-    
+
     /// Get provider type
     fn provider_type(&self) -> ProviderType;
-    
+
     /// Check if provider is ready (API key set, model loaded, etc.)
     fn is_ready(&self) -> bool;
-    
+
     /// List available models for this provider
     fn available_models(&self) -> Vec<String>;
-    
+
     /// Get the currently selected model
     fn current_model(&self) -> Option<String>;
-    
+
     /// Generate completion (non-streaming)
     async fn generate(&self, prompt: &str, max_tokens: u32) -> Result<String, LlmError>;
-    
+
     /// Generate completion with streaming callback
     async fn generate_stream(
         &self,
@@ -125,25 +125,26 @@ impl ProviderRegistry {
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     pub fn active_provider(&self) -> ProviderType {
         self.active
     }
-    
+
     pub fn set_active_provider(&mut self, provider: ProviderType) {
         self.active = provider;
     }
-    
+
     pub fn get_config(&self, provider: ProviderType) -> Option<&ProviderConfig> {
         self.config.get(&provider)
     }
-    
+
     pub fn set_config(&mut self, provider: ProviderType, config: ProviderConfig) {
         self.config.insert(provider, config);
     }
-    
+
     pub fn has_api_key(&self, provider: ProviderType) -> bool {
-        self.config.get(&provider)
+        self.config
+            .get(&provider)
             .and_then(|c| c.api_key.as_ref())
             .map(|k| !k.is_empty())
             .unwrap_or(false)

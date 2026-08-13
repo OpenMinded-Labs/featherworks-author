@@ -2,9 +2,9 @@
 //! Definiert verfügbare Modelle mit ihren Eigenschaften und Download-URLs
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum ModelKind { 
-    Gemma4E2B,     // Gemma 4 E2B (MLX)
-    Mistral7B,     // Mistral 7B (GGUF)
+pub enum ModelKind {
+    Gemma4E2B, // Gemma 4 E2B (MLX)
+    Mistral7B, // Mistral 7B (GGUF)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -14,7 +14,7 @@ pub enum RuntimeKind {
 }
 
 #[derive(Clone, Debug)]
-pub struct ModelParams { 
+pub struct ModelParams {
     pub ctx: usize,          // Context length in tokens
     pub temperature: f32,    // Default temperature
     pub top_p: f32,          // Default nucleus sampling
@@ -24,23 +24,29 @@ pub struct ModelParams {
 
 impl Default for ModelParams {
     fn default() -> Self {
-        Self { ctx: 4096, temperature: 0.7, top_p: 0.9, repeat_penalty: 1.1, gpu_layers: 99 }
+        Self {
+            ctx: 4096,
+            temperature: 0.7,
+            top_p: 0.9,
+            repeat_penalty: 1.1,
+            gpu_layers: 99,
+        }
     }
 }
 
 #[derive(Clone, Debug)]
-pub struct ModelInfo { 
-    pub id: &'static str,           // Unique identifier
-    pub name: &'static str,         // Display name
-    pub file: &'static str,         // Relative path to GGUF file
-    pub kind: ModelKind,            // Model type
-    pub params: ModelParams,        // Default parameters
-    pub size_bytes: u64,            // File size for download progress
-    pub ram_required_mb: u32,       // Minimum RAM needed
-    pub is_bundled: bool,           // Included in app bundle?
+pub struct ModelInfo {
+    pub id: &'static str,                   // Unique identifier
+    pub name: &'static str,                 // Display name
+    pub file: &'static str,                 // Relative path to GGUF file
+    pub kind: ModelKind,                    // Model type
+    pub params: ModelParams,                // Default parameters
+    pub size_bytes: u64,                    // File size for download progress
+    pub ram_required_mb: u32,               // Minimum RAM needed
+    pub is_bundled: bool,                   // Included in app bundle?
     pub download_url: Option<&'static str>, // URL for optional download
-    pub quantization: &'static str, // e.g. "Q4_K_M"
-    pub runtime: RuntimeKind,       // Runtime backend (MLX / llama.cpp)
+    pub quantization: &'static str,         // e.g. "Q4_K_M"
+    pub runtime: RuntimeKind,               // Runtime backend (MLX / llama.cpp)
 }
 
 /// Model Registry - all supported models
@@ -84,13 +90,13 @@ pub static REGISTRY: &[ModelInfo] = &[
 ];
 
 /// Find model by ID
-pub fn find(id: &str) -> Option<ModelInfo> { 
-    REGISTRY.iter().find(|m| m.id == id).cloned() 
+pub fn find(id: &str) -> Option<ModelInfo> {
+    REGISTRY.iter().find(|m| m.id == id).cloned()
 }
 
 /// Get default model (bundled)
 pub fn default_model() -> &'static ModelInfo {
-    &REGISTRY[0]  // gemma-4-e2b-mlx-q6
+    &REGISTRY[0] // gemma-4-e2b-mlx-q6
 }
 
 /// List all available model IDs

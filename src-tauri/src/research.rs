@@ -1,5 +1,5 @@
 //! Research System - Recherche-Ordner, Quellen, KI-Extraktion
-//! 
+//!
 //! Ermöglicht das Sammeln und Organisieren von Recherchematerial
 
 use rusqlite::Connection;
@@ -90,10 +90,10 @@ pub fn list_research_folders(conn: &Connection) -> Result<Vec<ResearchFolder>, S
             "SELECT f.id, f.parent_id, f.name, f.order_num,
                     (SELECT COUNT(*) FROM research_items WHERE folder_id = f.id) as item_count
              FROM research_folders f
-             ORDER BY f.order_num"
+             ORDER BY f.order_num",
         )
         .map_err(|e| e.to_string())?;
-    
+
     let folders = stmt
         .query_map([], |row| {
             Ok(ResearchFolder {
@@ -107,11 +107,15 @@ pub fn list_research_folders(conn: &Connection) -> Result<Vec<ResearchFolder>, S
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
-    
+
     Ok(folders)
 }
 
-pub fn create_research_folder(conn: &Connection, name: &str, parent_id: Option<&str>) -> Result<ResearchFolder, String> {
+pub fn create_research_folder(
+    conn: &Connection,
+    name: &str,
+    parent_id: Option<&str>,
+) -> Result<ResearchFolder, String> {
     let id = nanoid::nanoid!();
     let order_num: i32 = conn
         .query_row(
@@ -120,12 +124,13 @@ pub fn create_research_folder(conn: &Connection, name: &str, parent_id: Option<&
             |r| r.get(0),
         )
         .unwrap_or(1);
-    
+
     conn.execute(
         "INSERT INTO research_folders (id, parent_id, name, order_num) VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![id, parent_id, name, order_num],
-    ).map_err(|e| e.to_string())?;
-    
+    )
+    .map_err(|e| e.to_string())?;
+
     Ok(ResearchFolder {
         id,
         parent_id: parent_id.map(|s| s.to_string()),
@@ -139,11 +144,16 @@ pub fn update_research_folder(conn: &Connection, id: &str, name: &str) -> Result
     conn.execute(
         "UPDATE research_folders SET name = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
         rusqlite::params![name, id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-pub fn move_research_folder(conn: &Connection, id: &str, new_parent_id: Option<&str>) -> Result<(), String> {
+pub fn move_research_folder(
+    conn: &Connection,
+    id: &str,
+    new_parent_id: Option<&str>,
+) -> Result<(), String> {
     // Prevent moving folder into itself or its children
     if let Some(parent) = new_parent_id {
         if parent == id {
@@ -153,7 +163,11 @@ pub fn move_research_folder(conn: &Connection, id: &str, new_parent_id: Option<&
         let mut current = Some(parent.to_string());
         while let Some(ref pid) = current {
             let parent_of_parent: Option<String> = conn
-                .query_row("SELECT parent_id FROM research_folders WHERE id = ?1", [pid], |r| r.get(0))
+                .query_row(
+                    "SELECT parent_id FROM research_folders WHERE id = ?1",
+                    [pid],
+                    |r| r.get(0),
+                )
                 .ok();
             if parent_of_parent.as_ref() == Some(&id.to_string()) {
                 return Err("Ordner kann nicht in einen Unterordner verschoben werden".to_string());
@@ -161,11 +175,12 @@ pub fn move_research_folder(conn: &Connection, id: &str, new_parent_id: Option<&
             current = parent_of_parent;
         }
     }
-    
+
     conn.execute(
         "UPDATE research_folders SET parent_id = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
         rusqlite::params![new_parent_id, id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -180,7 +195,10 @@ pub fn delete_research_folder(conn: &Connection, id: &str) -> Result<(), String>
 // Item CRUD
 // ============================================================
 
-pub fn list_research_items(conn: &Connection, folder_id: Option<&str>) -> Result<Vec<ResearchItem>, String> {
+pub fn list_research_items(
+    conn: &Connection,
+    folder_id: Option<&str>,
+) -> Result<Vec<ResearchItem>, String> {
     let query = if folder_id.is_some() {
         "SELECT id, folder_id, item_type, title, content, source_url, file_name, mime_type, 
                 extracted_facts, tags, order_num, created_at
@@ -190,9 +208,9 @@ pub fn list_research_items(conn: &Connection, folder_id: Option<&str>) -> Result
                 extracted_facts, tags, order_num, created_at
          FROM research_items ORDER BY order_num"
     };
-    
+
     let mut stmt = conn.prepare(query).map_err(|e| e.to_string())?;
-    
+
     let items: Result<Vec<ResearchItem>, _> = if let Some(fid) = folder_id {
         stmt.query_map([fid], map_research_item)
     } else {
@@ -204,14 +222,14 @@ pub fn list_research_items(conn: &Connection, folder_id: Option<&str>) -> Result
     .into_iter()
     .map(Ok)
     .collect();
-    
+
     items
 }
 
 fn map_research_item(row: &rusqlite::Row) -> rusqlite::Result<ResearchItem> {
     let item_type_str: String = row.get(2)?;
     let tags_str: String = row.get::<_, Option<String>>(9)?.unwrap_or_default();
-    
+
     Ok(ResearchItem {
         id: row.get(0)?,
         folder_id: row.get(1)?,
@@ -222,7 +240,11 @@ fn map_research_item(row: &rusqlite::Row) -> rusqlite::Result<ResearchItem> {
         file_name: row.get(6)?,
         mime_type: row.get(7)?,
         extracted_facts: row.get(8)?,
-        tags: tags_str.split(',').filter(|s| !s.is_empty()).map(|s| s.trim().to_string()).collect(),
+        tags: tags_str
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(|s| s.trim().to_string())
+            .collect(),
         order_num: row.get(10)?,
         created_at: row.get::<_, Option<String>>(11)?.unwrap_or_default(),
     })
@@ -244,13 +266,13 @@ pub fn create_research_item(
             |r| r.get(0),
         )
         .unwrap_or(1);
-    
+
     conn.execute(
         "INSERT INTO research_items (id, folder_id, item_type, title, content, source_url, order_num) 
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         rusqlite::params![id, folder_id, item_type.to_string(), title, content, source_url, order_num],
     ).map_err(|e| e.to_string())?;
-    
+
     Ok(ResearchItem {
         id,
         folder_id: folder_id.map(|s| s.to_string()),
@@ -280,15 +302,21 @@ pub fn update_research_item(
         "UPDATE research_items SET title = ?1, content = ?2, source_url = ?3, tags = ?4, 
          updated_at = CURRENT_TIMESTAMP WHERE id = ?5",
         rusqlite::params![title, content, source_url, tags_str, id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-pub fn move_research_item(conn: &Connection, id: &str, new_folder_id: Option<&str>) -> Result<(), String> {
+pub fn move_research_item(
+    conn: &Connection,
+    id: &str,
+    new_folder_id: Option<&str>,
+) -> Result<(), String> {
     conn.execute(
         "UPDATE research_items SET folder_id = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
         rusqlite::params![new_folder_id, id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -328,13 +356,13 @@ pub fn create_research_file(
             |r| r.get(0),
         )
         .unwrap_or(1);
-    
+
     conn.execute(
         "INSERT INTO research_items (id, folder_id, item_type, title, content, file_name, mime_type, file_data, order_num) 
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         rusqlite::params![id, folder_id, item_type.to_string(), title, extracted_text.unwrap_or(""), file_name, mime_type, file_data, order_num],
     ).map_err(|e| e.to_string())?;
-    
+
     Ok(ResearchItem {
         id,
         folder_id: folder_id.map(|s| s.to_string()),
@@ -351,7 +379,10 @@ pub fn create_research_file(
     })
 }
 
-pub fn get_research_file_data(conn: &Connection, id: &str) -> Result<(String, String, Vec<u8>), String> {
+pub fn get_research_file_data(
+    conn: &Connection,
+    id: &str,
+) -> Result<(String, String, Vec<u8>), String> {
     conn.query_row(
         "SELECT file_name, mime_type, file_data FROM research_items WHERE id = ?1",
         [id],
@@ -362,7 +393,8 @@ pub fn get_research_file_data(conn: &Connection, id: &str) -> Result<(String, St
                 row.get::<_, Vec<u8>>(2)?,
             ))
         },
-    ).map_err(|e| format!("Datei nicht gefunden: {}", e))
+    )
+    .map_err(|e| format!("Datei nicht gefunden: {}", e))
 }
 
 // ============================================================
@@ -371,7 +403,7 @@ pub fn get_research_file_data(conn: &Connection, id: &str) -> Result<(String, St
 
 pub fn search_research(conn: &Connection, query: &str) -> Result<Vec<ResearchItem>, String> {
     let search_pattern = format!("%{}%", query);
-    
+
     let mut stmt = conn
         .prepare(
             "SELECT id, folder_id, item_type, title, content, source_url, file_name, mime_type,
@@ -381,15 +413,15 @@ pub fn search_research(conn: &Connection, query: &str) -> Result<Vec<ResearchIte
              ORDER BY 
                 CASE WHEN title LIKE ?1 THEN 0 ELSE 1 END,
                 order_num
-             LIMIT 50"
+             LIMIT 50",
         )
         .map_err(|e| e.to_string())?;
-    
+
     let items = stmt
         .query_map([&search_pattern], map_research_item)
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
-    
+
     Ok(items)
 }

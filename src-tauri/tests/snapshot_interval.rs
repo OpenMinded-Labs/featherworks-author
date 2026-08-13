@@ -1,15 +1,16 @@
-use featherworks_author::storage::database;
-use featherworks_author::services::scenes_service;
 use featherworks_author::domain::patch;
-use tempfile::tempdir;
+use featherworks_author::services::scenes_service;
+use featherworks_author::storage::database;
 use std::fs;
+use tempfile::tempdir;
 
 #[test]
 fn snapshot_every_interval() {
     let dir = tempdir().unwrap();
     let db_path = dir.path().join("snap.sqlite");
     let journal_path = dir.path().join("project.journal");
-    let conn = database::create_database(db_path.to_str().unwrap(), "P", "A", None, None, None).unwrap();
+    let conn =
+        database::create_database(db_path.to_str().unwrap(), "P", "A", None, None, None).unwrap();
     scenes_service::set_journal_path(Some(journal_path.to_string_lossy().to_string()));
 
     let chapters = database::list_chapters(&conn).unwrap();
@@ -24,6 +25,12 @@ fn snapshot_every_interval() {
     }
 
     let data = fs::read_to_string(&journal_path).expect("journal file present");
-    let snapshot_lines: Vec<&str> = data.lines().filter(|l| l.contains("\"snapshot\":true")).collect();
-    assert!(snapshot_lines.len() >= 1, "Expected at least one snapshot line after interval");
+    let snapshot_lines: Vec<&str> = data
+        .lines()
+        .filter(|l| l.contains("\"snapshot\":true"))
+        .collect();
+    assert!(
+        snapshot_lines.len() >= 1,
+        "Expected at least one snapshot line after interval"
+    );
 }

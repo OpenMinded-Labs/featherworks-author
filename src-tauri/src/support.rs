@@ -1,9 +1,9 @@
 //! Bug Report & Feedback System
-//! 
+//!
 //! Sammelt System-Informationen und ermöglicht es Usern, Fehler zu melden.
 //! Reports können per E-Mail oder Webhook gesendet werden.
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
@@ -91,9 +91,9 @@ impl SystemInfo {
     /// Sammle System-Informationen
     pub fn collect() -> Self {
         use crate::ai::hardware::HardwareInfo;
-        
+
         let hw = HardwareInfo::detect();
-        
+
         // Baue GPU-String aus verfügbaren Infos
         let gpu = if hw.has_metal {
             Some("Apple Metal (Apple Silicon)".to_string())
@@ -102,7 +102,7 @@ impl SystemInfo {
         } else {
             None
         };
-        
+
         SystemInfo {
             os: std::env::consts::OS.to_string(),
             os_version: get_os_version(),
@@ -144,9 +144,14 @@ fn get_os_version() -> String {
         fs::read_to_string("/etc/os-release")
             .ok()
             .and_then(|content| {
-                content.lines()
+                content
+                    .lines()
                     .find(|l| l.starts_with("PRETTY_NAME="))
-                    .map(|l| l.trim_start_matches("PRETTY_NAME=").trim_matches('"').to_string())
+                    .map(|l| {
+                        l.trim_start_matches("PRETTY_NAME=")
+                            .trim_matches('"')
+                            .to_string()
+                    })
             })
             .unwrap_or_else(|| "unknown".to_string())
     }
@@ -159,15 +164,15 @@ fn get_os_version() -> String {
 /// Lese die letzten N Zeilen aus dem Log
 pub fn get_recent_logs(log_dir: Option<PathBuf>, max_lines: usize) -> Option<String> {
     let log_path = log_dir?.join("featherworks.log");
-    
+
     if !log_path.exists() {
         return None;
     }
-    
+
     let content = fs::read_to_string(&log_path).ok()?;
     let lines: Vec<&str> = content.lines().collect();
     let start = lines.len().saturating_sub(max_lines);
-    
+
     Some(lines[start..].join("\n"))
 }
 
@@ -175,7 +180,7 @@ pub fn get_recent_logs(log_dir: Option<PathBuf>, max_lines: usize) -> Option<Str
 pub fn hash_path(path: &str) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    
+
     let mut hasher = DefaultHasher::new();
     path.hash(&mut hasher);
     format!("{:x}", hasher.finish())
@@ -184,7 +189,7 @@ pub fn hash_path(path: &str) -> String {
 /// Sende Report per Webhook (Discord/Slack kompatibel)
 pub async fn send_report_webhook(report: &BugReport, webhook_url: &str) -> Result<(), String> {
     let client = reqwest::Client::new();
-    
+
     // Format für Discord Webhook
     let payload = serde_json::json!({
         "embeds": [{
@@ -221,13 +226,14 @@ pub async fn send_report_webhook(report: &BugReport, webhook_url: &str) -> Resul
             "timestamp": &report.created_at
         }]
     });
-    
-    let response = client.post(webhook_url)
+
+    let response = client
+        .post(webhook_url)
         .json(&payload)
         .send()
         .await
         .map_err(|e| format!("Webhook-Fehler: {}", e))?;
-    
+
     if response.status().is_success() {
         Ok(())
     } else {
@@ -236,10 +242,7 @@ pub async fn send_report_webhook(report: &BugReport, webhook_url: &str) -> Resul
 }
 
 /// Sende Report per E-Mail (benötigt SMTP-Konfiguration)
-pub async fn send_report_email(
-    report: &BugReport, 
-    smtp_config: &SmtpConfig
-) -> Result<(), String> {
+pub async fn send_report_email(report: &BugReport, smtp_config: &SmtpConfig) -> Result<(), String> {
     // TODO: Implementieren mit lettre crate
     // Für jetzt: Fallback zu Webhook oder lokaler Speicherung
     Err("E-Mail-Versand noch nicht implementiert".to_string())
@@ -260,13 +263,13 @@ pub struct SmtpConfig {
 pub fn save_report_locally(report: &BugReport, app_data_dir: PathBuf) -> Result<PathBuf, String> {
     let reports_dir = app_data_dir.join("bug_reports");
     fs::create_dir_all(&reports_dir).map_err(|e| e.to_string())?;
-    
+
     let filename = format!("report_{}.json", report.id);
     let path = reports_dir.join(&filename);
-    
+
     let json = serde_json::to_string_pretty(report).map_err(|e| e.to_string())?;
     fs::write(&path, json).map_err(|e| e.to_string())?;
-    
+
     Ok(path)
 }
 
@@ -288,7 +291,11 @@ pub fn create_report(
         description,
         email,
         system_info: SystemInfo::collect(),
-        recent_logs: if include_logs { get_recent_logs(log_dir, 100) } else { None },
+        recent_logs: if include_logs {
+            get_recent_logs(log_dir, 100)
+        } else {
+            None
+        },
         app_state,
         created_at: chrono::Utc::now().to_rfc3339(),
         app_version: app_version.to_string(),

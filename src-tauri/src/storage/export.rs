@@ -1,12 +1,12 @@
+use crate::models::{Chapter, Project, Scene};
 use crate::storage::database::{get_project, list_chapters, list_scenes, load_ai_settings};
-use crate::models::{Project, Chapter, Scene};
-use rusqlite::{Connection, params};
-use std::path::Path;
-use anyhow::{Result, Context};
-use zip::write::FileOptions;
+use anyhow::{Context, Result};
+use rusqlite::{params, Connection};
+use serde_json::{from_str, to_string_pretty};
 use std::fs::File;
-use std::io::{Write, Read};
-use serde_json::{to_string_pretty, from_str};
+use std::io::{Read, Write};
+use std::path::Path;
+use zip::write::FileOptions;
 
 pub fn export_project_to_fwa(conn: &Connection, out_path: &Path) -> Result<()> {
     // Gather data
@@ -66,7 +66,8 @@ pub fn import_project_from_fwa(conn: &mut Connection, path: &Path) -> Result<()>
     // Read and validate manifest
     let mut manifest_exists = false;
     if let Ok(mut f) = archive.by_name("manifest.json") {
-        let mut s = String::new(); f.read_to_string(&mut s)?;
+        let mut s = String::new();
+        f.read_to_string(&mut s)?;
         let v: serde_json::Value = serde_json::from_str(&s).context("invalid manifest.json")?;
         if v.get("format").and_then(|x| x.as_str()) != Some("featherworks-project") {
             anyhow::bail!("unsupported archive format");
@@ -79,15 +80,21 @@ pub fn import_project_from_fwa(conn: &mut Connection, path: &Path) -> Result<()>
 
     // Read project.json
     let project: Project = {
-        let mut f = archive.by_name("project.json").context("project.json missing in archive")?;
-        let mut s = String::new(); f.read_to_string(&mut s)?;
+        let mut f = archive
+            .by_name("project.json")
+            .context("project.json missing in archive")?;
+        let mut s = String::new();
+        f.read_to_string(&mut s)?;
         from_str(&s).context("failed to parse project.json")?
     };
 
     // Read chapters.json
     let chapters: Vec<Chapter> = {
-        let mut f = archive.by_name("chapters.json").context("chapters.json missing in archive")?;
-        let mut s = String::new(); f.read_to_string(&mut s)?;
+        let mut f = archive
+            .by_name("chapters.json")
+            .context("chapters.json missing in archive")?;
+        let mut s = String::new();
+        f.read_to_string(&mut s)?;
         from_str(&s).context("failed to parse chapters.json")?
     };
 
@@ -97,8 +104,10 @@ pub fn import_project_from_fwa(conn: &mut Connection, path: &Path) -> Result<()>
         if let Ok(mut file) = archive.by_index(i) {
             let name = file.name().to_string();
             if name.starts_with("scenes/") && name.ends_with(".json") {
-                let mut s = String::new(); file.read_to_string(&mut s)?;
-                let sc: Scene = from_str(&s).context(format!("failed to parse scene file: {}", name))?;
+                let mut s = String::new();
+                file.read_to_string(&mut s)?;
+                let sc: Scene =
+                    from_str(&s).context(format!("failed to parse scene file: {}", name))?;
                 scenes.push(sc);
             }
         }
@@ -106,8 +115,12 @@ pub fn import_project_from_fwa(conn: &mut Connection, path: &Path) -> Result<()>
 
     // Optional: ai/settings.json
     let ai_settings_json = if let Ok(mut f) = archive.by_name("ai/settings.json") {
-        let mut s = String::new(); f.read_to_string(&mut s)?; Some(s)
-    } else { None };
+        let mut s = String::new();
+        f.read_to_string(&mut s)?;
+        Some(s)
+    } else {
+        None
+    };
 
     // Now write into DB transactionally. Strategy: replace chapters/scenes with archive content and
     // update project metadata. This is a straightforward import that overwrites current chapter/scene data.
@@ -115,8 +128,10 @@ pub fn import_project_from_fwa(conn: &mut Connection, path: &Path) -> Result<()>
 
     // Clear existing scenes, chapters and notes to match archive state
     tx.execute("DELETE FROM notes", []).ok();
-    tx.execute("DELETE FROM scenes", []).context("failed to clear scenes")?;
-    tx.execute("DELETE FROM chapters", []).context("failed to clear chapters")?;
+    tx.execute("DELETE FROM scenes", [])
+        .context("failed to clear scenes")?;
+    tx.execute("DELETE FROM chapters", [])
+        .context("failed to clear chapters")?;
 
     // Update project metadata (single-row table)
     tx.execute(
@@ -143,7 +158,9 @@ pub fn import_project_from_fwa(conn: &mut Connection, path: &Path) -> Result<()>
     // Import ai settings if present
     if let Some(s) = ai_settings_json {
         // Parse as generic map and upsert into ai_settings table
-        if let Ok(map) = serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&s) {
+        if let Ok(map) =
+            serde_json::from_str::<std::collections::HashMap<String, serde_json::Value>>(&s)
+        {
             for (k, v) in map {
                 let vstr = match v {
                     serde_json::Value::String(s) => s,

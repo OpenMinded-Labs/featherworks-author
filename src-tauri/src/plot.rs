@@ -1,5 +1,5 @@
 //! Plot System - Subplots, Plotpunkte, Szenen-Verknüpfungen
-//! 
+//!
 //! Ermöglicht visuelles Plotting mit Timeline und Struktur-Templates
 
 use rusqlite::Connection;
@@ -74,14 +74,16 @@ pub fn list_subplots(conn: &Connection) -> Result<Vec<Subplot>, String> {
     let mut stmt = conn
         .prepare("SELECT id, name, description, color, is_main, order_num FROM subplots ORDER BY order_num")
         .map_err(|e| e.to_string())?;
-    
+
     let subplots = stmt
         .query_map([], |row| {
             Ok(Subplot {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 description: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-                color: row.get::<_, Option<String>>(3)?.unwrap_or("#667eea".to_string()),
+                color: row
+                    .get::<_, Option<String>>(3)?
+                    .unwrap_or("#667eea".to_string()),
                 is_main: row.get::<_, i32>(4)? == 1,
                 order_num: row.get(5)?,
             })
@@ -89,21 +91,26 @@ pub fn list_subplots(conn: &Connection) -> Result<Vec<Subplot>, String> {
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
-    
+
     Ok(subplots)
 }
 
 pub fn create_subplot(conn: &Connection, name: &str, color: &str) -> Result<Subplot, String> {
     let id = nanoid::nanoid!();
     let order_num: i32 = conn
-        .query_row("SELECT COALESCE(MAX(order_num), 0) + 1 FROM subplots", [], |r| r.get(0))
+        .query_row(
+            "SELECT COALESCE(MAX(order_num), 0) + 1 FROM subplots",
+            [],
+            |r| r.get(0),
+        )
         .unwrap_or(1);
-    
+
     conn.execute(
         "INSERT INTO subplots (id, name, color, order_num) VALUES (?1, ?2, ?3, ?4)",
         rusqlite::params![id, name, color, order_num],
-    ).map_err(|e| e.to_string())?;
-    
+    )
+    .map_err(|e| e.to_string())?;
+
     Ok(Subplot {
         id,
         name: name.to_string(),
@@ -114,7 +121,13 @@ pub fn create_subplot(conn: &Connection, name: &str, color: &str) -> Result<Subp
     })
 }
 
-pub fn update_subplot(conn: &Connection, id: &str, name: &str, description: &str, color: &str) -> Result<(), String> {
+pub fn update_subplot(
+    conn: &Connection,
+    id: &str,
+    name: &str,
+    description: &str,
+    color: &str,
+) -> Result<(), String> {
     conn.execute(
         "UPDATE subplots SET name = ?1, description = ?2, color = ?3, updated_at = CURRENT_TIMESTAMP WHERE id = ?4",
         rusqlite::params![name, description, color, id],
@@ -125,13 +138,15 @@ pub fn update_subplot(conn: &Connection, id: &str, name: &str, description: &str
 pub fn delete_subplot(conn: &Connection, id: &str) -> Result<(), String> {
     // Can't delete main subplot
     let is_main: i32 = conn
-        .query_row("SELECT is_main FROM subplots WHERE id = ?1", [id], |r| r.get(0))
+        .query_row("SELECT is_main FROM subplots WHERE id = ?1", [id], |r| {
+            r.get(0)
+        })
         .unwrap_or(0);
-    
+
     if is_main == 1 {
         return Err("Haupthandlung kann nicht gelöscht werden".to_string());
     }
-    
+
     conn.execute("DELETE FROM subplots WHERE id = ?1", [id])
         .map_err(|e| e.to_string())?;
     Ok(())
@@ -142,7 +157,8 @@ pub fn reorder_subplots(conn: &Connection, ids: &[String]) -> Result<(), String>
         conn.execute(
             "UPDATE subplots SET order_num = ?1 WHERE id = ?2",
             rusqlite::params![idx as i32, id],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -159,7 +175,7 @@ pub fn list_plot_points(conn: &Connection) -> Result<Vec<PlotPoint>, String> {
              ORDER BY position_percent, order_num"
         )
         .map_err(|e| e.to_string())?;
-    
+
     let points: Vec<PlotPoint> = stmt
         .query_map([], |row| {
             Ok(PlotPoint {
@@ -169,7 +185,9 @@ pub fn list_plot_points(conn: &Connection) -> Result<Vec<PlotPoint>, String> {
                 description: row.get::<_, Option<String>>(3)?.unwrap_or_default(),
                 structure_position: row.get(4)?,
                 position_percent: row.get(5)?,
-                status: row.get::<_, Option<String>>(6)?.unwrap_or("planned".to_string()),
+                status: row
+                    .get::<_, Option<String>>(6)?
+                    .unwrap_or("planned".to_string()),
                 order_num: row.get(7)?,
                 linked_scene_ids: Vec::new(), // Will be populated below
             })
@@ -177,7 +195,7 @@ pub fn list_plot_points(conn: &Connection) -> Result<Vec<PlotPoint>, String> {
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
-    
+
     // Load linked scenes for each plot point
     let mut result = Vec::new();
     for mut point in points {
@@ -191,7 +209,7 @@ pub fn list_plot_points(conn: &Connection) -> Result<Vec<PlotPoint>, String> {
         point.linked_scene_ids = scene_ids;
         result.push(point);
     }
-    
+
     Ok(result)
 }
 
@@ -203,14 +221,18 @@ pub fn create_plot_point(
 ) -> Result<PlotPoint, String> {
     let id = nanoid::nanoid!();
     let order_num: i32 = conn
-        .query_row("SELECT COALESCE(MAX(order_num), 0) + 1 FROM plot_points", [], |r| r.get(0))
+        .query_row(
+            "SELECT COALESCE(MAX(order_num), 0) + 1 FROM plot_points",
+            [],
+            |r| r.get(0),
+        )
         .unwrap_or(1);
-    
+
     conn.execute(
         "INSERT INTO plot_points (id, subplot_id, title, position_percent, order_num) VALUES (?1, ?2, ?3, ?4, ?5)",
         rusqlite::params![id, subplot_id, title, position_percent, order_num],
     ).map_err(|e| e.to_string())?;
-    
+
     Ok(PlotPoint {
         id,
         subplot_id: subplot_id.map(|s| s.to_string()),
@@ -248,7 +270,11 @@ pub fn delete_plot_point(conn: &Connection, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn move_plot_point(conn: &Connection, id: &str, new_position_percent: f64) -> Result<(), String> {
+pub fn move_plot_point(
+    conn: &Connection,
+    id: &str,
+    new_position_percent: f64,
+) -> Result<(), String> {
     conn.execute(
         "UPDATE plot_points SET position_percent = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
         rusqlite::params![new_position_percent, id],
@@ -262,7 +288,8 @@ pub fn reorder_plot_points(conn: &Connection, ids: &[String]) -> Result<(), Stri
         conn.execute(
             "UPDATE plot_points SET order_num = ?1, updated_at = CURRENT_TIMESTAMP WHERE id = ?2",
             rusqlite::params![idx as i32, id],
-        ).map_err(|e| e.to_string())?;
+        )
+        .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -271,34 +298,47 @@ pub fn reorder_plot_points(conn: &Connection, ids: &[String]) -> Result<(), Stri
 // Plot-Scene Links
 // ============================================================
 
-pub fn link_scene_to_plot(conn: &Connection, plot_point_id: &str, scene_id: &str) -> Result<(), String> {
+pub fn link_scene_to_plot(
+    conn: &Connection,
+    plot_point_id: &str,
+    scene_id: &str,
+) -> Result<(), String> {
     let id = nanoid::nanoid!();
     conn.execute(
         "INSERT OR IGNORE INTO plot_scene_links (id, plot_point_id, scene_id) VALUES (?1, ?2, ?3)",
         rusqlite::params![id, plot_point_id, scene_id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-pub fn unlink_scene_from_plot(conn: &Connection, plot_point_id: &str, scene_id: &str) -> Result<(), String> {
+pub fn unlink_scene_from_plot(
+    conn: &Connection,
+    plot_point_id: &str,
+    scene_id: &str,
+) -> Result<(), String> {
     conn.execute(
         "DELETE FROM plot_scene_links WHERE plot_point_id = ?1 AND scene_id = ?2",
         rusqlite::params![plot_point_id, scene_id],
-    ).map_err(|e| e.to_string())?;
+    )
+    .map_err(|e| e.to_string())?;
     Ok(())
 }
 
-pub fn get_scenes_for_plot_point(conn: &Connection, plot_point_id: &str) -> Result<Vec<String>, String> {
+pub fn get_scenes_for_plot_point(
+    conn: &Connection,
+    plot_point_id: &str,
+) -> Result<Vec<String>, String> {
     let mut stmt = conn
         .prepare("SELECT scene_id FROM plot_scene_links WHERE plot_point_id = ?1")
         .map_err(|e| e.to_string())?;
-    
+
     let ids = stmt
         .query_map([plot_point_id], |row| row.get(0))
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
-    
+
     Ok(ids)
 }
 
@@ -306,13 +346,13 @@ pub fn get_plot_points_for_scene(conn: &Connection, scene_id: &str) -> Result<Ve
     let mut stmt = conn
         .prepare("SELECT plot_point_id FROM plot_scene_links WHERE scene_id = ?1")
         .map_err(|e| e.to_string())?;
-    
+
     let ids = stmt
         .query_map([scene_id], |row| row.get(0))
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
-    
+
     Ok(ids)
 }
 
@@ -324,7 +364,7 @@ pub fn list_plot_templates(conn: &Connection) -> Result<Vec<PlotTemplate>, Strin
     let mut stmt = conn
         .prepare("SELECT id, name, description, structure_json, is_system FROM plot_templates ORDER BY is_system DESC, name")
         .map_err(|e| e.to_string())?;
-    
+
     let templates = stmt
         .query_map([], |row| {
             let id: String = row.get(0)?;
@@ -332,14 +372,15 @@ pub fn list_plot_templates(conn: &Connection) -> Result<Vec<PlotTemplate>, Strin
             let description: String = row.get::<_, Option<String>>(2)?.unwrap_or_default();
             let structure_json: String = row.get(3)?;
             let is_system: i32 = row.get(4)?;
-            
+
             // Parse markers from JSON
-            let markers: Vec<StructureMarker> = serde_json::from_str::<serde_json::Value>(&structure_json)
-                .ok()
-                .and_then(|v| v.get("markers").cloned())
-                .and_then(|m| serde_json::from_value(m).ok())
-                .unwrap_or_default();
-            
+            let markers: Vec<StructureMarker> =
+                serde_json::from_str::<serde_json::Value>(&structure_json)
+                    .ok()
+                    .and_then(|v| v.get("markers").cloned())
+                    .and_then(|m| serde_json::from_value(m).ok())
+                    .unwrap_or_default();
+
             Ok(PlotTemplate {
                 id,
                 name,
@@ -351,11 +392,15 @@ pub fn list_plot_templates(conn: &Connection) -> Result<Vec<PlotTemplate>, Strin
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
-    
+
     Ok(templates)
 }
 
-pub fn apply_template_markers(conn: &Connection, template_id: &str, subplot_id: &str) -> Result<Vec<PlotPoint>, String> {
+pub fn apply_template_markers(
+    conn: &Connection,
+    template_id: &str,
+    subplot_id: &str,
+) -> Result<Vec<PlotPoint>, String> {
     // Get template
     let structure_json: String = conn
         .query_row(
@@ -364,13 +409,13 @@ pub fn apply_template_markers(conn: &Connection, template_id: &str, subplot_id: 
             |row| row.get(0),
         )
         .map_err(|e| format!("Template nicht gefunden: {}", e))?;
-    
+
     let markers: Vec<StructureMarker> = serde_json::from_str::<serde_json::Value>(&structure_json)
         .ok()
         .and_then(|v| v.get("markers").cloned())
         .and_then(|m| serde_json::from_value(m).ok())
         .unwrap_or_default();
-    
+
     // Create plot points from markers
     let mut created = Vec::new();
     for marker in markers {
@@ -379,12 +424,13 @@ pub fn apply_template_markers(conn: &Connection, template_id: &str, subplot_id: 
         conn.execute(
             "UPDATE plot_points SET structure_position = ?1 WHERE id = ?2",
             rusqlite::params![marker.id, point.id],
-        ).ok();
+        )
+        .ok();
         created.push(PlotPoint {
             structure_position: Some(marker.id),
             ..point
         });
     }
-    
+
     Ok(created)
 }

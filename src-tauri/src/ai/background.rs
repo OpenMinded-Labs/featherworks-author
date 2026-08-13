@@ -6,13 +6,15 @@
 //! - Konsistenz-Checks
 //! - RAG-Indexierung
 
+use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::mpsc;
-use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
-use super::queue::{Priority, enqueue, JobStatus};
-use super::entity_extraction::{build_extraction_prompt, build_scene_summary_prompt, parse_summary_response};
+use super::entity_extraction::{
+    build_extraction_prompt, build_scene_summary_prompt, parse_summary_response,
+};
+use super::queue::{enqueue, JobStatus, Priority};
 
 /// Typ eines Background-Jobs
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -76,29 +78,33 @@ pub async fn start_entity_scan(
 ) -> Result<String, String> {
     let job_id = Uuid::new_v4().to_string();
     let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
-    
+
     // Hole alle Szenen
     let scenes: Vec<(String, String, String)> = {
         let conn_guard = conn.lock().map_err(|e| e.to_string())?;
-        let mut stmt = conn_guard.prepare(
-            "SELECT s.id, s.title, s.content FROM scenes s 
+        let mut stmt = conn_guard
+            .prepare(
+                "SELECT s.id, s.title, s.content FROM scenes s 
              JOIN chapters c ON s.chapter_id = c.id 
-             ORDER BY c.order_num, s.order_num"
-        ).map_err(|e| e.to_string())?;
-        
-        let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-            ))
-        }).map_err(|e| e.to_string())?;
-        
+             ORDER BY c.order_num, s.order_num",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+
         rows.filter_map(|r| r.ok()).collect()
     };
-    
+
     let total = scenes.len();
-    
+
     // Registriere Job
     {
         let mut bg = jobs().lock().map_err(|e| e.to_string())?;
@@ -115,14 +121,14 @@ pub async fn start_entity_scan(
         });
         bg.cancel_channels.push((job_id.clone(), cancel_tx));
     }
-    
+
     let job_id_clone = job_id.clone();
     let entity_types_clone = entity_types.clone();
-    
+
     // Starte async Verarbeitung
     tokio::spawn(async move {
         log::info!("[bg-job] EntityScan gestartet: {} Szenen", total);
-        
+
         for (idx, (scene_id, scene_title, scene_content)) in scenes.iter().enumerate() {
             // Check for cancellation
             if cancel_rx.try_recv().is_ok() {
@@ -133,40 +139,35 @@ pub async fn start_entity_scan(
                 });
                 return;
             }
-            
+
             // Update progress
             update_job_status(&job_id_clone, |s| {
                 s.current_item = Some(scene_title.clone());
                 s.processed = idx;
                 s.progress = idx as f32 / total as f32;
             });
-            
+
             // Skip empty scenes
             if scene_content.trim().len() < 50 {
                 continue;
             }
-            
+
             // Baue Prompt und enqueue
             let type_refs: Vec<&str> = entity_types_clone.iter().map(|s| s.as_str()).collect();
             let prompt = build_extraction_prompt(scene_content, &type_refs);
-            
-            let (_req_id, rx) = enqueue(
-                prompt,
-                512,
-                Priority::Background,
-                "entity_scan"
-            );
-            
+
+            let (_req_id, rx) = enqueue(prompt, 512, Priority::Background, "entity_scan");
+
             // Warte auf Ergebnis (mit Timeout)
-            match tokio::time::timeout(
-                tokio::time::Duration::from_secs(60),
-                rx
-            ).await {
+            match tokio::time::timeout(tokio::time::Duration::from_secs(60), rx).await {
                 Ok(Ok(Ok(response))) => {
                     // Entity-Parsing erfolgt im Frontend via EntitiesPanel
                     // Background-Job sammelt nur Rohdaten für spätere Analyse
-                    log::debug!("[bg-job] Szene {} verarbeitet: {} chars Antwort", 
-                               scene_title, response.len());
+                    log::debug!(
+                        "[bg-job] Szene {} verarbeitet: {} chars Antwort",
+                        scene_title,
+                        response.len()
+                    );
                 }
                 Ok(Ok(Err(e))) => {
                     log::warn!("[bg-job] Fehler bei Szene {}: {}", scene_title, e);
@@ -185,7 +186,7 @@ pub async fn start_entity_scan(
                 }
             }
         }
-        
+
         // Job abgeschlossen
         update_job_status(&job_id_clone, |s| {
             s.status = JobStatus::Completed;
@@ -193,15 +194,22 @@ pub async fn start_entity_scan(
             s.processed = total;
             s.current_item = None;
         });
-        
-        log::info!("[bg-job] EntityScan abgeschlossen: {} Szenen, {} Fehler", 
-                   total, 
-                   jobs().lock().map(|j| j.active.iter()
-                       .find(|a| a.id == job_id_clone)
-                       .map(|a| a.errors.len())
-                       .unwrap_or(0)).unwrap_or(0));
+
+        log::info!(
+            "[bg-job] EntityScan abgeschlossen: {} Szenen, {} Fehler",
+            total,
+            jobs()
+                .lock()
+                .map(|j| j
+                    .active
+                    .iter()
+                    .find(|a| a.id == job_id_clone)
+                    .map(|a| a.errors.len())
+                    .unwrap_or(0))
+                .unwrap_or(0)
+        );
     });
-    
+
     Ok(job_id)
 }
 
@@ -211,34 +219,38 @@ pub async fn start_summarize_scenes(
 ) -> Result<String, String> {
     let job_id = Uuid::new_v4().to_string();
     let (cancel_tx, mut cancel_rx) = mpsc::channel::<()>(1);
-    
+
     // Hole alle Szenen ohne Summary
     let scenes: Vec<(String, String, String)> = {
         let conn_guard = conn.lock().map_err(|e| e.to_string())?;
-        let mut stmt = conn_guard.prepare(
-            "SELECT s.id, s.title, s.content FROM scenes s 
+        let mut stmt = conn_guard
+            .prepare(
+                "SELECT s.id, s.title, s.content FROM scenes s 
              JOIN chapters c ON s.chapter_id = c.id 
              WHERE s.summary IS NULL OR s.summary = ''
-             ORDER BY c.order_num, s.order_num"
-        ).map_err(|e| e.to_string())?;
-        
-        let rows = stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, String>(1)?,
-                row.get::<_, Option<String>>(2)?.unwrap_or_default(),
-            ))
-        }).map_err(|e| e.to_string())?;
-        
+             ORDER BY c.order_num, s.order_num",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?.unwrap_or_default(),
+                ))
+            })
+            .map_err(|e| e.to_string())?;
+
         rows.filter_map(|r| r.ok()).collect()
     };
-    
+
     let total = scenes.len();
-    
+
     if total == 0 {
         return Ok("no_scenes".to_string());
     }
-    
+
     // Registriere Job
     {
         let mut bg = jobs().lock().map_err(|e| e.to_string())?;
@@ -255,13 +267,13 @@ pub async fn start_summarize_scenes(
         });
         bg.cancel_channels.push((job_id.clone(), cancel_tx));
     }
-    
+
     let job_id_clone = job_id.clone();
     let conn_clone = conn.clone();
-    
+
     tokio::spawn(async move {
         log::info!("[bg-job] SummarizeScenes gestartet: {} Szenen", total);
-        
+
         for (idx, (scene_id, scene_title, scene_content)) in scenes.iter().enumerate() {
             // Check for cancellation
             if cancel_rx.try_recv().is_ok() {
@@ -272,37 +284,29 @@ pub async fn start_summarize_scenes(
                 });
                 return;
             }
-            
+
             // Update progress
             update_job_status(&job_id_clone, |s| {
                 s.current_item = Some(scene_title.clone());
                 s.processed = idx;
                 s.progress = idx as f32 / total as f32;
             });
-            
+
             // Skip empty/short scenes
             if scene_content.trim().len() < 50 {
                 continue;
             }
-            
+
             // Baue Prompt
             let prompt = build_scene_summary_prompt(scene_title, scene_content);
-            
-            let (_req_id, rx) = enqueue(
-                prompt,
-                200,
-                Priority::Background,
-                "summarize_scene"
-            );
-            
+
+            let (_req_id, rx) = enqueue(prompt, 200, Priority::Background, "summarize_scene");
+
             // Warte auf Ergebnis
-            match tokio::time::timeout(
-                tokio::time::Duration::from_secs(60),
-                rx
-            ).await {
+            match tokio::time::timeout(tokio::time::Duration::from_secs(60), rx).await {
                 Ok(Ok(Ok(response))) => {
                     let summary = parse_summary_response(&response);
-                    
+
                     // Speichere Summary in DB
                     if let Ok(conn_guard) = conn_clone.lock() {
                         if let Err(e) = conn_guard.execute(
@@ -312,7 +316,7 @@ pub async fn start_summarize_scenes(
                             log::warn!("[bg-job] DB-Fehler für {}: {}", scene_title, e);
                         }
                     }
-                    
+
                     log::debug!("[bg-job] Szene {} zusammengefasst", scene_title);
                 }
                 Ok(Ok(Err(e))) => {
@@ -328,7 +332,7 @@ pub async fn start_summarize_scenes(
                 }
             }
         }
-        
+
         // Job abgeschlossen
         update_job_status(&job_id_clone, |s| {
             s.status = JobStatus::Completed;
@@ -336,16 +340,17 @@ pub async fn start_summarize_scenes(
             s.processed = total;
             s.current_item = None;
         });
-        
+
         log::info!("[bg-job] SummarizeScenes abgeschlossen");
     });
-    
+
     Ok(job_id)
 }
 
 /// Helper: Update Job-Status
-fn update_job_status<F>(job_id: &str, f: F) 
-where F: FnOnce(&mut BackgroundJobStatus) 
+fn update_job_status<F>(job_id: &str, f: F)
+where
+    F: FnOnce(&mut BackgroundJobStatus),
 {
     if let Ok(mut bg) = jobs().lock() {
         if let Some(status) = bg.active.iter_mut().find(|s| s.id == job_id) {
@@ -361,7 +366,7 @@ pub fn cancel_background_job(job_id: &str) -> bool {
         if let Some(pos) = bg.cancel_channels.iter().position(|(id, _)| id == job_id) {
             let (_, tx) = bg.cancel_channels.remove(pos);
             let _ = tx.try_send(());
-            
+
             // Markiere als cancel_requested
             if let Some(status) = bg.active.iter_mut().find(|s| s.id == job_id) {
                 status.cancel_requested = true;
@@ -384,7 +389,8 @@ pub fn get_background_job_status(job_id: &str) -> Option<BackgroundJobStatus> {
 /// Hole alle aktiven Background-Jobs
 pub fn list_background_jobs() -> Vec<BackgroundJobStatus> {
     if let Ok(bg) = jobs().lock() {
-        bg.active.iter()
+        bg.active
+            .iter()
             .filter(|s| matches!(s.status, JobStatus::Queued | JobStatus::Running))
             .cloned()
             .collect()
@@ -396,7 +402,8 @@ pub fn list_background_jobs() -> Vec<BackgroundJobStatus> {
 /// Bereinige abgeschlossene Jobs
 pub fn cleanup_completed_jobs() {
     if let Ok(mut bg) = jobs().lock() {
-        bg.active.retain(|s| matches!(s.status, JobStatus::Queued | JobStatus::Running));
+        bg.active
+            .retain(|s| matches!(s.status, JobStatus::Queued | JobStatus::Running));
         // Collect active IDs first to avoid borrow conflict
         let active_ids: Vec<String> = bg.active.iter().map(|s| s.id.clone()).collect();
         bg.cancel_channels.retain(|(id, _)| active_ids.contains(id));
