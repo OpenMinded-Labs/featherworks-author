@@ -39,6 +39,11 @@ enum EntityRelevance {
 /// Substring matching is not good enough here: a character called "Ana" would
 /// otherwise match "Analyse", "Ananas" and "Banane", pulling irrelevant
 /// descriptions into every single prompt.
+///
+/// A trailing genitive *s* is accepted, so "Jacks Augenfarbe" finds "Jack".
+/// This is deliberately the only inflection handled: German possessives are
+/// what users actually type when asking about a character, while broader
+/// stemming would start matching unrelated words again.
 fn mentions_word(haystack_lower: &str, name: &str) -> bool {
     let needle = name.trim().to_lowercase();
     if needle.is_empty() {
@@ -54,12 +59,19 @@ fn mentions_word(haystack_lower: &str, name: &str) -> bool {
             .chars()
             .next_back()
             .is_none_or(|c| !c.is_alphanumeric());
-        let after_ok = haystack_lower[end..]
-            .chars()
-            .next()
-            .is_none_or(|c| !c.is_alphanumeric());
 
-        if before_ok && after_ok {
+        // Accept the word itself, plus "Jacks" and "Jack's". A guard against
+        // names already ending in s was tried and removed: the boundary check
+        // below already rejects "Lukassen", and no case could be found where
+        // the extra condition changed the outcome.
+        let rest = &haystack_lower[end..];
+        let after_ok = |tail: &str| {
+            tail.chars().next().is_none_or(|c| !c.is_alphanumeric() && c != '\'')
+        };
+        let genitive_ok = rest.strip_prefix('s').is_some_and(after_ok)
+            || rest.strip_prefix("'s").is_some_and(after_ok);
+
+        if before_ok && (after_ok(rest) || genitive_ok) {
             return true;
         }
         // Advance past this position; needle is non-empty so this terminates.
@@ -69,6 +81,51 @@ fn mentions_word(haystack_lower: &str, name: &str) -> bool {
         }
     }
     false
+}
+
+/// Every string by which an entity can be addressed: the full name, each part
+/// of it, and the same for every alias.
+///
+/// Entities are stored under their full name ("Jacob Smith"), but nobody types
+/// that into a chat - they write "Jack" or "Jacks". Matching only the complete
+/// string meant a cast recorded properly was *less* findable than a sloppy one.
+///
+/// Nobility and surname particles are not searchable on their own: "van" in
+/// "van Helsing" is grammar, not a name, and matching it pulled the character
+/// into any sentence containing "van der ...". A length rule was tried first
+/// and failed - "van" and "der" are exactly three characters, the same as the
+/// genuinely searchable "Ida" or "Tom".
+fn lookup_terms(entity: &ContextEntity) -> Vec<String> {
+    const NAME_PARTICLES: [&str; 14] = [
+        "von", "van", "de", "del", "della", "di", "da", "du", "der", "den", "la", "le", "of", "ibn",
+    ];
+
+    let mut terms: Vec<String> = Vec::new();
+    let mut push = |term: &str| {
+        let term = term.trim();
+        if !term.is_empty() && !terms.iter().any(|t| t == term) {
+            terms.push(term.to_string());
+        }
+    };
+
+    let full_names = std::iter::once(entity.name.as_str())
+        .chain(entity.aliases.split(',').map(str::trim))
+        .filter(|n| !n.is_empty());
+
+    for full in full_names {
+        push(full);
+        // Only worth splitting when there is more than one part.
+        let parts: Vec<&str> = full.split_whitespace().collect();
+        if parts.len() > 1 {
+            for part in parts {
+                let lower = part.to_lowercase();
+                if !NAME_PARTICLES.contains(&lower.as_str()) {
+                    push(part);
+                }
+            }
+        }
+    }
+    terms
 }
 
 /// Truncate at a char boundary. Slicing a `String` by byte index panics if the
@@ -131,13 +188,11 @@ impl FontaineContext {
             .entities
             .iter()
             .map(|entity| {
-                // An entity is addressed either by its name or by any alias.
-                let names = std::iter::once(entity.name.as_str())
-                    .chain(entity.aliases.split(',').map(str::trim))
-                    .filter(|n| !n.is_empty());
+                // An entity is addressed by its name, any part of it, or an alias.
+                let terms = lookup_terms(entity);
 
                 let mut relevance = EntityRelevance::Roster;
-                for name in names {
+                for name in &terms {
                     if !query_lower.is_empty() && mentions_word(&query_lower, name) {
                         relevance = EntityRelevance::InQuery;
                         break;
@@ -786,8 +841,6 @@ mod tests {
             "Wie sieht der Kapitän aus?",
             // Typo.
             "Welche Augenfarbe hat Jak?",
-            // Inflected form - German genitive does not match the bare name.
-            "Was ist Jacks Augenfarbe?",
         ];
 
         for question in missed {
@@ -797,6 +850,99 @@ mod tests {
                 "retrieval unexpectedly succeeded for {question:?} - \
                  if this now works, delete the case instead of loosening it"
             );
+        }
+    }
+
+    /// Multi-part names, which is what entities in a real project actually look
+    /// like. The user types a first name or a nickname, never the full record.
+    #[test]
+    fn multi_part_names_and_nicknames() {
+        let full_name = context_with(
+            vec![ContextEntity {
+                id: "jack".into(),
+                type_name: "Charakter".into(),
+                name: "Jack Smith".into(),
+                aliases: String::new(),
+                description: "Grüne Augen.".into(),
+            }],
+            None,
+        );
+
+        let nickname = context_with(
+            vec![ContextEntity {
+                id: "jacob".into(),
+                type_name: "Charakter".into(),
+                name: "Jacob Smith".into(),
+                aliases: "Jack".into(),
+                description: "Blaue Augen.".into(),
+            }],
+            None,
+        );
+
+        let hit = |ctx: &FontaineContext, q: &str, needle: &str| {
+            ctx.to_prompt_context(Some(q)).contains(needle)
+        };
+
+        // A bare nickname.
+        assert!(hit(&nickname, "Wie ist Jack drauf?", "Blaue Augen"));
+        // First name of a multi-part entity name.
+        assert!(hit(&full_name, "Wie ist Jack drauf?", "Grüne Augen"));
+        // Surname alone.
+        assert!(hit(&full_name, "Was macht Smith?", "Grüne Augen"));
+        // Genitive of a first name, of a full name, and of an alias.
+        assert!(hit(&full_name, "Wie ist Jacks Augenfarbe?", "Grüne Augen"));
+        assert!(hit(&nickname, "Wie ist Jacks Augenfarbe?", "Blaue Augen"));
+        assert!(hit(&full_name, "Wie ist Jack Smiths Augenfarbe?", "Grüne Augen"));
+        // English possessive, since entity names are often English.
+        assert!(hit(&full_name, "What is Jack's eye colour?", "Grüne Augen"));
+    }
+
+    /// The genitive rule must not turn into "any trailing letter is fine".
+    #[test]
+    fn name_parts_do_not_match_unrelated_words() {
+        let ctx = context_with(
+            vec![
+                ContextEntity {
+                    id: "jack".into(),
+                    type_name: "Charakter".into(),
+                    name: "Jack Smith".into(),
+                    aliases: String::new(),
+                    description: "GEHEIM-JACK".into(),
+                },
+                ContextEntity {
+                    id: "lukas".into(),
+                    type_name: "Charakter".into(),
+                    // Already ends in s, so no genitive s may be appended.
+                    name: "Lukas".into(),
+                    aliases: String::new(),
+                    description: "GEHEIM-LUKAS".into(),
+                },
+                ContextEntity {
+                    id: "vanhelsing".into(),
+                    type_name: "Charakter".into(),
+                    // "van" is a particle: not searchable on its own.
+                    name: "van Helsing".into(),
+                    aliases: String::new(),
+                    description: "GEHEIM-VAN".into(),
+                },
+            ],
+            None,
+        );
+
+        for question in [
+            "Wo ist die Jacke?",       // Jack + e, not a genitive
+            "Er trug eine Jacket.",    // Jack + et
+            "Die Lukassen kamen an.",  // Lukas + sen
+            "Der Wagen fuhr van der Strasse entlang.", // bare "van"
+            "Ein Schmied arbeitete.",  // near-miss on Smith
+        ] {
+            let prompt = ctx.to_prompt_context(Some(question));
+            for secret in ["GEHEIM-JACK", "GEHEIM-LUKAS", "GEHEIM-VAN"] {
+                assert!(
+                    !prompt.contains(secret),
+                    "{question:?} wrongly pulled in {secret}"
+                );
+            }
         }
     }
 
