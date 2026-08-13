@@ -135,6 +135,37 @@ fn thinking_disabled_answers_within_budget() {
     );
 }
 
+/// Documents that raising the answer budget is *not* what costs time: the model
+/// stops on its own long before the cap. The caps in `token_budget_for_mode`
+/// bound the degenerate case, they do not speed up the normal one. Re-run this
+/// before "optimising" budgets again.
+#[test]
+#[ignore = "requires model + venv"]
+fn answer_budget_is_a_ceiling_not_a_cost() {
+    use featherworks_author::ai::server;
+
+    server::start(&python(), &model_dir()).expect("server failed to start");
+
+    let scene = "Der Regen schlug gegen das Fenster. Marla zaehlte die Sekunden \
+                 zwischen Blitz und Donner. "
+        .repeat(200);
+    let system = format!("Du bist Fontaine.\n\nKONTEXT:\n{scene}");
+    let question = "Fasse die Stimmung der Szene zusammen.";
+
+    for budget in [768usize, 1024, 2048] {
+        let t = Instant::now();
+        let completion = server::chat(&[("system", &system), ("user", question)], budget, 0.2, false)
+            .expect("completion failed");
+        println!(
+            "budget {budget:5} -> {:5.1}s, {} chars",
+            t.elapsed().as_secs_f64(),
+            completion.content.chars().count()
+        );
+    }
+
+    server::stop();
+}
+
 /// Streaming has to deliver the answer in pieces, not as one final blob -
 /// otherwise the chat UI gains nothing over the blocking path.
 #[test]

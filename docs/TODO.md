@@ -22,8 +22,10 @@ Details, Messwerte und verifizierte Fallstricke: **`docs/LLM-STATUS.md`**
   - Braucht eigene MLX-Implementierung oder Wechsel auf llama.cpp/GGUF
 - [ ] Thinking-Primer als Task-Flag (Extraktion an, Lektorat aus)
 - [ ] Evaluation über mehrere Werke statt nur Martyria 1
-- [ ] **Kontext-Kuratierung** — Entity-Heuristik, Tool-Use für RAG-Suche,
-      LanceDB statt Chroma, vom Modell gepflegter Knowledge Graph
+- [x] **Kontext-Kuratierung: Entity-Heuristik** — nur genannte Entitäten mit
+      Beschreibung, Rest als Namensliste; 6785 → 1956 Tokens bei 50 Figuren
+- [ ] **Kontext-Kuratierung: Rest** — Tool-Use für RAG-Suche, LanceDB statt
+      Chroma, vom Modell gepflegter Knowledge Graph
 - [ ] **KV-Cache auf 4 Bit quantisieren** (Speicher bei langen Kontexten)
 - [ ] **Agenting** — autonomes Arbeiten, User-Interrupts (Vorbild: Ailey)
 - [ ] Icons auf Lucide umstellen

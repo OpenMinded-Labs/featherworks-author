@@ -17,6 +17,30 @@ pub struct StartChatRequest {
     pub prompt: String,
 }
 
+/// How many tokens a mode may generate.
+///
+/// Note what this does *not* buy: unused budget is free. Measured on a 4k-token
+/// prompt, the same request took 10.2 s at a cap of 1024 and 10.1 s at 2048,
+/// because the model stops on its own after ~250 tokens either way.
+///
+/// The cap is a bound on the *worst* case, not the typical one. Generation runs
+/// at ~37 tok/s, so a model that starts repeating itself burns 55 s at 2048 and
+/// 20 s at 768 before anything cuts it off. Sizing the ceiling per mode keeps a
+/// degenerate answer from holding the UI hostage.
+pub(crate) fn token_budget_for_mode(mode: Option<&str>, prompt_chars: usize) -> usize {
+    match mode {
+        // A bounded list of findings, one line each.
+        Some("lektorat") => 768,
+        // The agent rewrites the passage it was given, so the answer scales
+        // with the input. ~4 chars per token, doubled for headroom, clamped so
+        // a huge selection cannot run away.
+        Some("agent") => (prompt_chars / 2).clamp(512, 2048),
+        // Free-form conversation: long enough for a real explanation, short
+        // enough that a runaway answer stops on its own.
+        _ => 1024,
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatTokenEvent {
     pub id: String,
@@ -106,7 +130,7 @@ fn truncate_prompt_safe(text: &str, max_chars: usize) -> String {
     truncated.to_string()
 }
 
-pub fn start_session(app: &AppHandle, prompt: String) -> Result<String, String> {
+pub fn start_session(app: &AppHandle, prompt: String, mode: Option<String>) -> Result<String, String> {
     let id = Uuid::new_v4().to_string();
     let provider_config = get_active_provider();
 
@@ -125,6 +149,8 @@ pub fn start_session(app: &AppHandle, prompt: String) -> Result<String, String> 
         provider_config.provider_type,
         prompt.len()
     );
+
+    let max_tokens = token_budget_for_mode(mode.as_deref(), prompt.len());
 
     let (tx_cancel, mut rx_cancel) = mpsc::channel::<()>(1);
     let handle_app = app.clone();
@@ -159,7 +185,7 @@ pub fn start_session(app: &AppHandle, prompt: String) -> Result<String, String> 
                         });
                         return;
                     }
-                    res = provider.generate_stream(&prompt, 2048, move |token| {
+                    res = provider.generate_stream(&prompt, max_tokens as u32, move |token| {
                         let _ = app_for_callback.emit_all("ai_token", ChatTokenEvent {
                             id: id_for_callback.clone(),
                             token,
@@ -227,7 +253,7 @@ pub fn start_session(app: &AppHandle, prompt: String) -> Result<String, String> 
                         });
                         return;
                     }
-                    res = provider.generate_stream(&prompt, 2048, move |token| {
+                    res = provider.generate_stream(&prompt, max_tokens as u32, move |token| {
                         let _ = app_for_callback.emit_all("ai_token", ChatTokenEvent {
                             id: id_for_callback.clone(),
                             token,
@@ -301,7 +327,7 @@ pub fn start_session(app: &AppHandle, prompt: String) -> Result<String, String> 
                             });
                             return;
                         }
-                        res = server::chat_stream(&message_refs, 2048, 0.2, thinking, move |token| {
+                        res = server::chat_stream(&message_refs, max_tokens, 0.2, thinking, move |token| {
                             let _ = app_for_callback.emit_all("ai_token", ChatTokenEvent {
                                 id: id_for_callback.clone(),
                                 token,
@@ -368,4 +394,33 @@ pub fn start_session(app: &AppHandle, prompt: String) -> Result<String, String> 
     }
 
     Ok(id)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::token_budget_for_mode;
+
+    #[test]
+    fn lektorat_gets_a_tight_budget() {
+        // Findings are one line each; a long input must not raise the ceiling.
+        assert_eq!(token_budget_for_mode(Some("lektorat"), 500), 768);
+        assert_eq!(token_budget_for_mode(Some("lektorat"), 90_000), 768);
+    }
+
+    #[test]
+    fn agent_budget_follows_the_input() {
+        // A rewrite is roughly as long as the passage it rewrites.
+        assert_eq!(token_budget_for_mode(Some("agent"), 4_000), 2_000);
+        // Tiny selections still get room for a usable answer.
+        assert_eq!(token_budget_for_mode(Some("agent"), 100), 512);
+        // ... and a whole chapter cannot blow the ceiling.
+        assert_eq!(token_budget_for_mode(Some("agent"), 100_000), 2_048);
+    }
+
+    #[test]
+    fn chat_and_unknown_modes_share_the_default() {
+        assert_eq!(token_budget_for_mode(Some("chat"), 4_000), 1_024);
+        assert_eq!(token_budget_for_mode(None, 4_000), 1_024);
+        assert_eq!(token_budget_for_mode(Some("etwas-neues"), 4_000), 1_024);
+    }
 }

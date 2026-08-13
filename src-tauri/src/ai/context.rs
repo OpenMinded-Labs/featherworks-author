@@ -13,6 +13,64 @@ const MAX_SCENE_SNIPPET: usize = 500;
 /// Maximum number of relevant scenes to include
 const MAX_RELEVANT_SCENES: usize = 3;
 
+/// Description budget for an entity the query asks about by name.
+const DESC_QUERY_MATCH: usize = 1500;
+/// Description budget for an entity that appears in the scene at hand.
+const DESC_SCENE_MATCH: usize = 400;
+/// How many described entities to include at most. Beyond this the cast is
+/// listed by name only - a roster the model can still refer to, but that costs
+/// a few tokens per entry instead of a few hundred.
+const MAX_DESCRIBED_ENTITIES: usize = 12;
+
+/// How relevant an entity is to the request at hand. Ordering matters: higher
+/// variants win when the budget is tight.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum EntityRelevance {
+    /// Not mentioned anywhere - name and type only.
+    Roster,
+    /// Appears in the scene the user is working on.
+    InScene,
+    /// Named in the question itself.
+    InQuery,
+}
+
+/// Whether `name` occurs in `haystack` as a whole word.
+///
+/// Substring matching is not good enough here: a character called "Ana" would
+/// otherwise match "Analyse", "Ananas" and "Banane", pulling irrelevant
+/// descriptions into every single prompt.
+fn mentions_word(haystack_lower: &str, name: &str) -> bool {
+    let needle = name.trim().to_lowercase();
+    if needle.is_empty() {
+        return false;
+    }
+
+    let mut from = 0;
+    while let Some(idx) = haystack_lower[from..].find(&needle) {
+        let start = from + idx;
+        let end = start + needle.len();
+
+        let before_ok = haystack_lower[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|c| !c.is_alphanumeric());
+        let after_ok = haystack_lower[end..]
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_alphanumeric());
+
+        if before_ok && after_ok {
+            return true;
+        }
+        // Advance past this position; needle is non-empty so this terminates.
+        from = start + needle.chars().next().map(char::len_utf8).unwrap_or(1);
+        if from >= haystack_lower.len() {
+            break;
+        }
+    }
+    false
+}
+
 /// Truncate at a char boundary. Slicing a `String` by byte index panics if the
 /// index lands inside a multi-byte character (umlauts, emoji, ...), so never
 /// use `&s[..n]` directly on user text.
@@ -57,38 +115,99 @@ pub struct FontaineContext {
 }
 
 impl FontaineContext {
+    /// Rates every entity against the question and the scene at hand.
+    ///
+    /// Split out from `to_prompt_context` so the ranking can be tested without
+    /// building a whole prompt.
+    fn rank_entities(&self, query_hint: Option<&str>) -> Vec<(&ContextEntity, EntityRelevance)> {
+        let query_lower = query_hint.map(|q| q.to_lowercase()).unwrap_or_default();
+        let scene_lower = self
+            .current_scene
+            .as_deref()
+            .map(|s| s.to_lowercase())
+            .unwrap_or_default();
+
+        let mut rated: Vec<(&ContextEntity, EntityRelevance)> = self
+            .entities
+            .iter()
+            .map(|entity| {
+                // An entity is addressed either by its name or by any alias.
+                let names = std::iter::once(entity.name.as_str())
+                    .chain(entity.aliases.split(',').map(str::trim))
+                    .filter(|n| !n.is_empty());
+
+                let mut relevance = EntityRelevance::Roster;
+                for name in names {
+                    if !query_lower.is_empty() && mentions_word(&query_lower, name) {
+                        relevance = EntityRelevance::InQuery;
+                        break;
+                    }
+                    if !scene_lower.is_empty() && mentions_word(&scene_lower, name) {
+                        relevance = EntityRelevance::InScene;
+                    }
+                }
+                (entity, relevance)
+            })
+            .collect();
+
+        // Highest relevance first; ties keep the database order (type, name) so
+        // the prompt prefix stays stable across requests and the KV cache hits.
+        rated.sort_by(|a, b| b.1.cmp(&a.1));
+        rated
+    }
+
     /// Format context as a string for the LLM prompt
     /// query_hint: optional query to prioritize relevant entities
     pub fn to_prompt_context(&self, query_hint: Option<&str>) -> String {
         let mut parts = Vec::new();
-        let query_lower = query_hint.map(|q| q.to_lowercase()).unwrap_or_default();
 
         // Project title
         parts.push(format!("📖 Projekt: {}", self.project_title));
 
         // Entities (characters, locations, etc.)
-        // Show full description for entities mentioned in query, abbreviated for others
+        //
+        // Dumping every description into every prompt was the single largest
+        // context cost: a cast of 50 easily added ~20k characters that had
+        // nothing to do with the question. Only entities the query or the
+        // current scene actually mention get a description now; the rest stay
+        // as a name roster so the model still knows they exist.
         if !self.entities.is_empty() {
             parts.push("\n🎭 Bekannte Figuren & Elemente:".to_string());
-            for entity in &self.entities {
-                let is_relevant = !query_lower.is_empty()
-                    && (query_lower.contains(&entity.name.to_lowercase())
-                        || entity.aliases.split(',').any(|a| {
-                            !a.trim().is_empty() && query_lower.contains(&a.trim().to_lowercase())
-                        }));
 
+            let rated = self.rank_entities(query_hint);
+            let mut described = 0;
+            let mut roster: Vec<String> = Vec::new();
+
+            for (entity, relevance) in rated {
+                let budget = match relevance {
+                    EntityRelevance::InQuery => Some(DESC_QUERY_MATCH),
+                    EntityRelevance::InScene => Some(DESC_SCENE_MATCH),
+                    EntityRelevance::Roster => None,
+                };
+
+                let describe = budget.is_some()
+                    && described < MAX_DESCRIBED_ENTITIES
+                    && !entity.description.is_empty();
+
+                if !describe {
+                    roster.push(format!("{} ({})", entity.name, entity.type_name));
+                    continue;
+                }
+
+                described += 1;
                 let mut entry = format!("- {} ({})", entity.name, entity.type_name);
                 if !entity.aliases.is_empty() {
                     entry.push_str(&format!(", auch bekannt als: {}", entity.aliases));
                 }
-                if !entity.description.is_empty() {
-                    // Full description for entities named in the query, generous
-                    // excerpt for the rest.
-                    let max_desc = if is_relevant { 1500 } else { 400 };
-                    let desc = truncate_chars(&entity.description, max_desc);
-                    entry.push_str(&format!(": {}", desc));
-                }
+                entry.push_str(&format!(
+                    ": {}",
+                    truncate_chars(&entity.description, budget.unwrap())
+                ));
                 parts.push(entry);
+            }
+
+            if !roster.is_empty() {
+                parts.push(format!("- Weitere: {}", roster.join(", ")));
             }
         }
 
@@ -561,6 +680,152 @@ fn get_relevant_rag_snippets(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn entity(name: &str, aliases: &str, description: &str) -> ContextEntity {
+        ContextEntity {
+            id: name.to_string(),
+            type_name: "Charakter".to_string(),
+            name: name.to_string(),
+            aliases: aliases.to_string(),
+            description: description.to_string(),
+        }
+    }
+
+    fn context_with(entities: Vec<ContextEntity>, scene: Option<&str>) -> FontaineContext {
+        FontaineContext {
+            project_title: "Testbuch".to_string(),
+            entities,
+            current_scene: scene.map(str::to_string),
+            current_scene_title: Some("Szene".to_string()),
+            relevant_scenes: Vec::new(),
+            rag_documents: Vec::new(),
+            knowledge_snippets: Vec::new(),
+            total_chars: 0,
+        }
+    }
+
+    #[test]
+    fn word_match_ignores_substrings() {
+        // The bug this guards against: "Ana" matching "Banane" dragged an
+        // unrelated character description into every prompt.
+        assert!(mentions_word("wo ist ana gerade?", "Ana"));
+        assert!(!mentions_word("er ass eine banane", "Ana"));
+        assert!(!mentions_word("die analyse ergab nichts", "Ana"));
+        // Punctuation is a boundary, casing is already normalised by the caller.
+        assert!(mentions_word("und dann rief ana!", "ana"));
+    }
+
+    #[test]
+    fn entities_named_in_the_query_rank_highest() {
+        let ctx = context_with(
+            vec![
+                entity("Marla", "", "Die Protagonistin."),
+                entity("Herbert", "", "Ein Sachse in Bayern."),
+            ],
+            Some("Herbert stand am Fenster."),
+        );
+
+        let ranked = ctx.rank_entities(Some("Was denkt Marla?"));
+        assert_eq!(ranked[0].0.name, "Marla");
+        assert_eq!(ranked[0].1, EntityRelevance::InQuery);
+        // Herbert is not asked about, but he is in the scene.
+        let herbert = ranked.iter().find(|(e, _)| e.name == "Herbert").unwrap();
+        assert_eq!(herbert.1, EntityRelevance::InScene);
+    }
+
+    #[test]
+    fn aliases_count_as_mentions() {
+        let ctx = context_with(vec![entity("Herbert", "Herbi, Bert", "Sachse.")], None);
+        let ranked = ctx.rank_entities(Some("Wo ist Herbi?"));
+        assert_eq!(ranked[0].1, EntityRelevance::InQuery);
+    }
+
+    #[test]
+    fn unmentioned_entities_are_listed_without_description() {
+        let ctx = context_with(
+            vec![
+                entity("Marla", "", "Die Protagonistin."),
+                entity("Zrassha", "", "GEHEIMNIS-BESCHREIBUNG"),
+            ],
+            Some("Marla stand am Fenster."),
+        );
+
+        let prompt = ctx.to_prompt_context(Some("Was tut Marla?"));
+        assert!(prompt.contains("Die Protagonistin."));
+        // Named, so the model knows she exists - but without the payload.
+        assert!(prompt.contains("Zrassha"));
+        assert!(
+            !prompt.contains("GEHEIMNIS-BESCHREIBUNG"),
+            "description of an unmentioned entity leaked into the prompt"
+        );
+    }
+
+    #[test]
+    fn large_cast_stays_bounded() {
+        // Every entity is mentioned in the scene, so without a cap all of them
+        // would be described.
+        let names: Vec<String> = (0..40).map(|i| format!("Figur{i}")).collect();
+        let scene = names.join(" trifft ");
+        let entities: Vec<ContextEntity> = names
+            .iter()
+            .map(|n| entity(n, "", &"x".repeat(2000)))
+            .collect();
+
+        let ctx = context_with(entities, Some(&scene));
+        let prompt = ctx.to_prompt_context(Some("Was passiert?"));
+
+        let described = prompt.matches("): x").count();
+        assert!(
+            described <= MAX_DESCRIBED_ENTITIES,
+            "described {described} entities, cap is {MAX_DESCRIBED_ENTITIES}"
+        );
+        // The undescribed ones still appear by name.
+        assert!(prompt.contains("Weitere:"));
+        assert!(prompt.contains("Figur39"));
+    }
+
+    #[test]
+    #[ignore = "measurement, not an assertion"]
+    fn measure_prompt_size_for_a_realistic_cast() {
+        // 50 entities with a paragraph of description each, a 6k-char scene,
+        // and a question that names exactly one of them.
+        let entities: Vec<ContextEntity> = (0..50)
+            .map(|i| {
+                entity(
+                    &format!("Figur{i}"),
+                    "",
+                    &format!("Beschreibung von Figur {i}. {}", "Detail. ".repeat(60)),
+                )
+            })
+            .collect();
+        let scene = "Figur3 ging durch den Regen. ".repeat(200);
+
+        let ctx = context_with(entities, Some(&scene));
+        let prompt = ctx.to_prompt_context(Some("Was motiviert Figur7?"));
+
+        // What the previous implementation would have emitted: every entity
+        // described, 400 chars each (1500 for the one named in the query).
+        let before: usize = ctx
+            .entities
+            .iter()
+            .map(|e| {
+                let budget = if e.name == "Figur7" { 1500 } else { 400 };
+                e.name.chars().count()
+                    + e.type_name.chars().count()
+                    + truncate_chars(&e.description, budget).chars().count()
+                    + 6
+            })
+            .sum::<usize>()
+            + scene.chars().count();
+
+        println!("scene chars   : {}", scene.chars().count());
+        println!("before (chars): {before}  (~{} tokens)", before / 4);
+        println!(
+            "after  (chars): {}  (~{} tokens)",
+            prompt.chars().count(),
+            prompt.chars().count() / 4
+        );
+    }
 
     #[test]
     fn test_extract_keywords() {

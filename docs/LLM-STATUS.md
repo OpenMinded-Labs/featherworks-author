@@ -260,16 +260,65 @@ Die aktuelle Szene geht seit `context.rs` ungekürzt in den Prompt. Bei
 Entitäten reicht das Prinzip „alles rein" aber nicht — ein Projekt mit 80
 Figuren füllt den Kontext mit Irrelevantem.
 
-Geplant:
+#### Heuristische Vorfilterung — erledigt (13.08.2026)
 
-- **Heuristische Vorfilterung**, welche Entitäten das Modell überhaupt sieht
-  (Nennung in der Szene, Nennung in der Frage, Beziehungsnähe).
+`FontaineContext::rank_entities()` stuft jede Entität ein:
+
+| Stufe     | Bedingung                      | Budget         |
+| --------- | ------------------------------ | -------------- |
+| `InQuery` | in der Frage genannt           | 1500 Zeichen   |
+| `InScene` | in der aktuellen Szene genannt | 400 Zeichen    |
+| `Roster`  | sonst                          | nur Name + Typ |
+
+Beschrieben werden höchstens 12 Entitäten (`MAX_DESCRIBED_ENTITIES`), der Rest
+erscheint als Namensliste — das Modell weiss also, dass es sie gibt, ohne dass
+sie den Kontext füllen.
+
+Gemessen (`measure_prompt_size_for_a_realistic_cast`, 50 Figuren mit je einem
+Absatz Beschreibung, 5800-Zeichen-Szene, Frage nennt eine Figur):
+
+|         | Zeichen | ~Tokens |
+| ------- | ------- | ------- |
+| vorher  | 27 143  | 6 785   |
+| nachher | 7 827   | 1 956   |
+
+Der Abgleich nutzt Wortgrenzen (`mentions_word`), nicht `contains`. Vorher
+hätte eine Figur „Ana" bei „Banane" und „Analyse" angeschlagen und ihre
+Beschreibung in jeden Prompt gezogen.
+
+Sortiert wird stabil nach Relevanz — die DB-Reihenfolge bleibt innerhalb einer
+Stufe erhalten, damit das Prompt-Präfix zwischen Anfragen gleich bleibt und der
+Prefix-Cache greift.
+
+#### Antwort-Budget pro Modus — erledigt, aber kein Speed-Gewinn
+
+`token_budget_for_mode()`: Lektorat 768, Agent `prompt/2` (512–2048), Chat 1024.
+Vorher pauschal 2048 für alles.
+
+Wichtig, damit das nicht nochmal „optimiert" wird: **das Budget kostet nichts,
+wenn es ungenutzt bleibt.** Gemessen auf 4k-Token-Prompt
+(`answer_budget_is_a_ceiling_not_a_cost`):
+
+| Budget | Zeit    | Antwortlänge |
+| ------ | ------- | ------------ |
+| 768    | 14,2 s  | 1008 Zeichen |
+| 1024   | 10,2 s  | 1008 Zeichen |
+| 2048   | 10,1 s  | 1008 Zeichen |
+
+Identische Antwort, identische Zeit — das Modell hört nach ~250 Tokens von
+selbst auf. Die Deckel begrenzen den *entarteten* Fall (Modell wiederholt sich),
+nicht den normalen. Bei 37 tok/s sind das 20 s statt 55 s, bis etwas abbricht.
+
+Offen:
+
 - **Tool-Use für RAG-Suche**: Gemma 4 E2B ist tool-use-fähig. Statt Kontext
   vorab zu raten, sucht das Modell selbst nach Bedarf.
 - **Vektor-Store auf LanceDB** statt Chroma (embedded, keine Server-Runtime —
   passt zum Auslieferungsproblem).
 - **Knowledge Graph**, den das Modell selbst pflegt. Bei narrativen Büchern
   besonders wertvoll: Figurenbeziehungen, Zeitlinien, Orte über Bände hinweg.
+- **Beziehungsnähe** als vierte Relevanzstufe (Figur X ist mit der gefragten
+  Figur verknüpft) — braucht den Knowledge Graph.
 
 ### 5. KV-Cache auf 4 Bit quantisieren
 

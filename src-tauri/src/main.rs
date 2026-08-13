@@ -1682,7 +1682,7 @@ async fn analyze_lektorat_ai(
     let prompt = build_lektorat_prompt(&req.text, &req.lang, req.include_grammar);
 
     // Starte AI Session - Ergebnisse kommen via Events
-    stream::start_session(&app, prompt)
+    stream::start_session(&app, prompt, Some("lektorat".to_string()))
 }
 
 /// Chunked Lektorat (für sehr lange Szenen) mit Fortschritts-Events
@@ -2459,11 +2459,14 @@ fn save_extracted_entity(
 #[derive(serde::Deserialize)]
 struct StartAiChatRequest {
     prompt: String,
+    /// "chat", "lektorat" or "agent" - decides the generation budget.
+    #[serde(default)]
+    mode: Option<String>,
 }
 
 #[tauri::command]
 async fn start_ai_chat(req: StartAiChatRequest, app: tauri::AppHandle) -> Result<String, String> {
-    stream::start_session(&app, req.prompt)
+    stream::start_session(&app, req.prompt, req.mode)
 }
 
 // --- Auto-Paragraph Command (ALWAYS uses local LLM, never API) ---
