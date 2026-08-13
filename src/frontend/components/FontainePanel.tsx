@@ -5,6 +5,7 @@ import { invoke } from '@tauri-apps/api/tauri';
 import { open } from '@tauri-apps/api/dialog';
 import { invalidateEntityCache } from '../entityHighlightService';
 import { AiSettingsPanel } from './AiSettingsPanel';
+import { resolveContextScope, type EditorFocus, type ContextScope } from '../contextScope';
 
 // Types
 type AiMode = 'chat' | 'lektorat' | 'agent';
@@ -97,12 +98,125 @@ interface FontainePanelProps {
   characters?: Array<{ id: string; name: string; summary?: string }>;
   onInsert: (text: string) => void;
   onApplySuggestion?: (original: string, replacement: string) => void;
+  /**
+   * Current selection and cursor in the editor, used to narrow the context
+   * sent to the model (see contextScope.ts). Without it the whole scene is
+   * used, which is wrong for local edits like "rephrase this".
+   */
+  getEditorFocus?: () => EditorFocus | null;
 }
 
 // Format timestamp for chat
 const formatTime = (date: Date): string => {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 };
+
+function renderInlineBold(text: string, keyPrefix: string): React.ReactNode[] {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+  return parts.map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={`${keyPrefix}-b-${i}`}>{part.slice(2, -2)}</strong>;
+    }
+    return <React.Fragment key={`${keyPrefix}-t-${i}`}>{part}</React.Fragment>;
+  });
+}
+
+function renderAssistantRichText(content: string): React.ReactNode {
+  const segments: Array<{ type: 'text' | 'code'; lang?: string; content: string }> = [];
+  const codeRe = /```([\w-]+)?\n([\s\S]*?)```/g;
+  let last = 0;
+  let m: RegExpExecArray | null;
+
+  while ((m = codeRe.exec(content)) !== null) {
+    if (m.index > last) {
+      segments.push({ type: 'text', content: content.slice(last, m.index) });
+    }
+    segments.push({ type: 'code', lang: m[1] || '', content: m[2] || '' });
+    last = codeRe.lastIndex;
+  }
+  if (last < content.length) {
+    segments.push({ type: 'text', content: content.slice(last) });
+  }
+
+  return (
+    <>
+      {segments.map((seg, sIdx) => {
+        if (seg.type === 'code') {
+          return (
+            <pre key={`seg-${sIdx}`} className="fontaine-code-block">
+              {seg.lang ? <div className="fontaine-code-lang">{seg.lang}</div> : null}
+              <code>{seg.content}</code>
+            </pre>
+          );
+        }
+
+        const lines = seg.content.split('\n');
+        const blocks: React.ReactNode[] = [];
+        let i = 0;
+        while (i < lines.length) {
+          const line = lines[i].trimEnd();
+          if (!line.trim()) {
+            i += 1;
+            continue;
+          }
+
+          const numbered = line.match(/^\d+\.\s+(.+)/);
+          if (numbered) {
+            const items: string[] = [];
+            while (i < lines.length) {
+              const mm = lines[i].trim().match(/^\d+\.\s+(.+)/);
+              if (!mm) break;
+              items.push(mm[1]);
+              i += 1;
+            }
+            blocks.push(
+              <ol key={`seg-${sIdx}-ol-${i}`} className="fontaine-md-list">
+                {items.map((item, li) => (
+                  <li key={`seg-${sIdx}-ol-${i}-${li}`}>{renderInlineBold(item, `ol-${sIdx}-${i}-${li}`)}</li>
+                ))}
+              </ol>
+            );
+            continue;
+          }
+
+          const bullet = line.match(/^[-*]\s+(.+)/);
+          if (bullet) {
+            const items: string[] = [];
+            while (i < lines.length) {
+              const mm = lines[i].trim().match(/^[-*]\s+(.+)/);
+              if (!mm) break;
+              items.push(mm[1]);
+              i += 1;
+            }
+            blocks.push(
+              <ul key={`seg-${sIdx}-ul-${i}`} className="fontaine-md-list">
+                {items.map((item, li) => (
+                  <li key={`seg-${sIdx}-ul-${i}-${li}`}>{renderInlineBold(item, `ul-${sIdx}-${i}-${li}`)}</li>
+                ))}
+              </ul>
+            );
+            continue;
+          }
+
+          const paraLines: string[] = [line.trim()];
+          i += 1;
+          while (i < lines.length && lines[i].trim() && !/^\d+\.\s+/.test(lines[i].trim()) && !/^[-*]\s+/.test(lines[i].trim())) {
+            paraLines.push(lines[i].trim());
+            i += 1;
+          }
+          const paragraph = paraLines.join(' ');
+          blocks.push(
+            <p key={`seg-${sIdx}-p-${i}`} className="fontaine-md-paragraph">
+              {renderInlineBold(paragraph, `p-${sIdx}-${i}`)}
+            </p>
+          );
+        }
+
+        return <React.Fragment key={`seg-${sIdx}`}>{blocks}</React.Fragment>;
+      })}
+    </>
+  );
+}
 
 // Prompt Templates with Phi-3 chat format
 // Phi-3 expects: <|user|>\n{message}<|end|>\n<|assistant|>\n
@@ -241,7 +355,8 @@ export const FontainePanel: React.FC<FontainePanelProps> = ({
   projectTitle,
   characters = [],
   onInsert,
-  onApplySuggestion 
+  onApplySuggestion,
+  getEditorFocus
 }) => {
   const { t, i18n } = useTranslation();
   const [mode, setMode] = useState<AiMode>('chat');
@@ -1000,31 +1115,42 @@ Give me:
     return () => { stop.then(f => f()); };
   }, [entityTypes, t, extractionSessionId]);
 
+  // Which slice of the scene the model currently sees. Shown in the UI because
+  // otherwise identical questions give different answers for no visible reason.
+  const [activeScope, setActiveScope] = useState<{ scope: ContextScope; paragraphIndex?: number }>({ scope: 'scene' });
+
   // Build context string using RAG from backend
   const buildContext = useCallback(async (query: string): Promise<string> => {
+    // Selection beats paragraph beats whole scene.
+    const focus = getEditorFocus?.() ?? null;
+    const scoped = resolveContextScope(sceneContent, focus);
+    setActiveScope({ scope: scoped.scope, paragraphIndex: scoped.paragraphIndex });
+
     try {
       // Try to get RAG context from backend (includes entities, relevant scenes)
       const result = await invoke<{ context: string; entityCount: number; relevantSceneCount: number }>('build_fontaine_context', {
-        req: { query, sceneId: activeSceneId }
+        req: {
+          query,
+          sceneId: activeSceneId,
+          // Only override when actually narrowed - otherwise let the backend
+          // use its own scene text.
+          sceneOverride: scoped.scope === 'scene' ? null : scoped.text,
+        }
       });
-      console.log(`[Fontaine] RAG context: ${result.entityCount} entities, ${result.relevantSceneCount} relevant scenes, ${result.context.length} chars`);
-      // Debug: Log first 500 chars of context
-      if (result.context.length > 0) {
-        console.log('[Fontaine] Context preview:', result.context.substring(0, 500) + '...');
-      }
+      console.log(`[Fontaine] RAG context: ${result.entityCount} entities, ${result.relevantSceneCount} relevant scenes, ${result.context.length} chars, scope=${scoped.scope}`);
       return result.context;
     } catch (e) {
       console.warn('[Fontaine] RAG context failed, using fallback:', e);
       // Fallback to simple context
       const parts: string[] = [];
       if (projectTitle) parts.push(`Projekt: ${projectTitle}`);
-      if (sceneContent) {
-        // Szene vollständig - sie ist das Material, um das es geht.
-        parts.push(`Aktuelle Szene:\n${sceneContent}`);
+      if (scoped.text) {
+        const label = scoped.scope === 'scene' ? 'Aktuelle Szene' : 'Aktueller Abschnitt';
+        parts.push(`${label}:\n${scoped.text}`);
       }
       return parts.join('\n');
     }
-  }, [activeSceneId, projectTitle, sceneContent]);
+  }, [activeSceneId, projectTitle, sceneContent, getEditorFocus]);
 
   // Send message based on mode
   const send = async (customPrompt?: string) => {
@@ -1035,6 +1161,11 @@ Give me:
     
     // Build context asynchronously using RAG
     const context = await buildContext(text);
+
+    // The text to work *on* follows the same scope rule as the context: a
+    // selected paragraph should be edited, not the whole scene.
+    const scopedTarget = resolveContextScope(sceneContent, getEditorFocus?.() ?? null);
+    const targetText = scopedTarget.text;
 
     switch (mode) {
       case 'lektorat':
@@ -1057,7 +1188,7 @@ Give me:
         try {
           const jobId = await invoke<string>('analyze_lektorat_chunked', {
             req: {
-              text: sceneContent,
+              text: targetText,
               sceneId: activeSceneId,
               lang: i18n.language,
               includeGrammar,
@@ -1086,7 +1217,7 @@ Give me:
           }]);
           return;
         }
-        prompt = createPrompts(i18n.language).agent(sceneContent, context);
+        prompt = createPrompts(i18n.language).agent(targetText, context);
         setMessages(prev => [...prev, { 
           id: crypto.randomUUID(), 
           role: 'user', 
@@ -1623,6 +1754,10 @@ Give me:
         {activeSceneId ? (
           <span className="fontaine-context-active">
             📄 {t('fontaine.sceneActive')} {t('fontaine.wordsCount', { count: sceneContent?.split(/\s+/).length || 0 })}
+            {' · '}
+            {activeScope.scope === 'selection' && 'Kontext: Auswahl'}
+            {activeScope.scope === 'paragraph' && `Kontext: Absatz ${activeScope.paragraphIndex ?? '?'}`}
+            {activeScope.scope === 'scene' && 'Kontext: ganze Szene'}
           </span>
         ) : (
           <span className="fontaine-context-none">{t('fontaine.noSceneSelected')}</span>
@@ -1820,7 +1955,11 @@ Give me:
               <span className="chat-bubble-time">{formatTime(m.timestamp)}</span>
             </div>
             <div className="chat-bubble-content">
-              {m.content || (m.streaming ? <span className="typing-indicator">●●●</span> : '')}
+              {m.content
+                ? (m.role === 'assistant' && !m.streaming
+                    ? renderAssistantRichText(m.content)
+                    : m.content)
+                : (m.streaming ? <span className="typing-indicator">●●●</span> : '')}
             </div>
             {m.role === 'assistant' && !m.streaming && m.content && (
               <div className="chat-bubble-actions">

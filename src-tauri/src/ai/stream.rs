@@ -1,5 +1,7 @@
 use super::generate_tokens;
+use super::engines::mlx::split_prompt_roles;
 use super::providers::{claude::ClaudeProvider, openai::OpenAIProvider, LlmProvider};
+use super::server;
 use serde::{Deserialize, Serialize};
 use std::{
     sync::{Mutex, OnceLock},
@@ -267,9 +269,68 @@ pub fn start_session(app: &AppHandle, prompt: String) -> Result<String, String> 
             }
         }
         _ => {
-            // Local LLM (default) - use existing generate_tokens
-            let words: Vec<String> = generate_tokens(&prompt);
+            // Local LLM (default): prefer true token streaming from the
+            // resident mlx server; fall back to simulated token chunks when
+            // no server is running.
+            const THINK: &str = "<|think|>";
+            let thinking = prompt.contains(THINK);
+            let prompt_clean = prompt.replace(THINK, "");
+            let (system, user) = split_prompt_roles(&prompt_clean);
+
+            let mut messages: Vec<(String, String)> = Vec::new();
+            if !system.trim().is_empty() {
+                messages.push(("system".to_string(), system));
+            }
+            messages.push(("user".to_string(), user));
+
             let handle = tokio::spawn(async move {
+                if server::is_running() {
+                    let id_for_callback = id_clone.clone();
+                    let app_for_callback = handle_app.clone();
+                    let message_refs: Vec<(&str, &str)> = messages
+                        .iter()
+                        .map(|(role, content)| (role.as_str(), content.as_str()))
+                        .collect();
+
+                    let result = tokio::select! {
+                        _ = rx_cancel.recv() => {
+                            let _ = handle_app.emit_all("ai_token", ChatTokenEvent {
+                                id: id_clone.clone(),
+                                token: "[CANCEL]".into(),
+                                done: true
+                            });
+                            return;
+                        }
+                        res = server::chat_stream(&message_refs, 2048, 0.2, thinking, move |token| {
+                            let _ = app_for_callback.emit_all("ai_token", ChatTokenEvent {
+                                id: id_for_callback.clone(),
+                                token,
+                                done: false
+                            });
+                        }) => res
+                    };
+
+                    match result {
+                        Ok(_) => {
+                            let _ = handle_app.emit_all("ai_token", ChatTokenEvent {
+                                id: id_clone,
+                                token: String::new(),
+                                done: true,
+                            });
+                        }
+                        Err(e) => {
+                            let _ = handle_app.emit_all("ai_token", ChatTokenEvent {
+                                id: id_clone,
+                                token: format!("[ERROR: {}]", e),
+                                done: true,
+                            });
+                        }
+                    }
+                    return;
+                }
+
+                // Fallback path when no resident server is available.
+                let words: Vec<String> = generate_tokens(&prompt_clean);
                 for (i, w) in words.iter().enumerate() {
                     tokio::select! {
                         _ = rx_cancel.recv() => {

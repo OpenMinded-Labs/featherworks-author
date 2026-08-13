@@ -31,7 +31,10 @@ export const EditorPane: React.FC<{
   onCommandApiReady: (runner: (cmd: string) => void) => void;
   onScroll?: (scrollTop: number) => void;
   lektoratHighlight?: { from: number; to: number; id?: string } | null;
-  commentApi$?: (api:{ getSelection: () => { from:number; to:number; text:string } | null })=>void;
+  commentApi$?: (api:{
+    getSelection: () => { from:number; to:number; text:string } | null;
+    getFocus: () => { selectedText:string; cursorOffset:number } | null;
+  })=>void;
   // Context menu callbacks
   onOpenThesaurus?: (word: string) => void;
   onResearch?: (text: string) => void;

@@ -2546,6 +2546,41 @@ input:hover, textarea:hover, select:hover {
   word-break: break-word;
 }
 
+.fontaine-md-paragraph {
+  margin: 0 0 8px 0;
+}
+
+.fontaine-md-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+.fontaine-md-list {
+  margin: 0 0 8px 18px;
+  padding: 0;
+}
+
+.fontaine-md-list li {
+  margin: 2px 0;
+}
+
+.fontaine-code-block {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--glass-border-subtle);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.fontaine-code-lang {
+  font-size: 11px;
+  opacity: 0.7;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 /* Typing Indicator */
 .typing-indicator {
   display: inline-block;

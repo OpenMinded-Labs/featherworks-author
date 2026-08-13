@@ -464,7 +464,10 @@ function App() {
     const [editorScrollTop, setEditorScrollTop] = useState(0);
     const [lektoratHighlight, setLektoratHighlight] = useState<{ from: number; to: number; id?: string } | null>(null);
     const [humanComments, setHumanComments] = useState<Array<{ id:string; from:number; to:number; text:string; note:string; suggestion?:string; status:'open'|'accepted'|'rejected' }>>([]);
-    const commentApiRef = useRef<{ getSelection: ()=> { from:number; to:number; text:string } | null } | null>(null);
+    const commentApiRef = useRef<{
+        getSelection: ()=> { from:number; to:number; text:string } | null;
+        getFocus: ()=> { selectedText:string; cursorOffset:number } | null;
+    } | null>(null);
     
     // Auto-Paragraph Dialog State
     const [autoParagraphScene, setAutoParagraphScene] = useState<{ id: string; title: string; content: string } | null>(null);
@@ -2065,6 +2068,7 @@ function App() {
                           sceneContent={editorContent}
                           projectTitle={project?.title}
                           characters={[]}
+                                                    getEditorFocus={() => commentApiRef.current?.getFocus() ?? null}
                           onInsert={(text) => {
                             if (!activeSceneId) return;
                             setEditorContent(prev => prev + (prev.endsWith('\n') ? '' : '\n') + text + '\n');

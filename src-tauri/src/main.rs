@@ -2845,6 +2845,13 @@ struct BuildContextRequest {
     query: String,
     #[serde(rename = "sceneId")]
     scene_id: Option<String>,
+    /// Overrides the scene text pulled from the database.
+    ///
+    /// The frontend narrows context to the selected paragraph when the cursor
+    /// sits in one (see `contextScope.ts`): asked to "rephrase this", a model
+    /// that receives the whole scene cannot tell which part is meant.
+    #[serde(rename = "sceneOverride")]
+    scene_override: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -2869,7 +2876,13 @@ fn build_fontaine_context(
         .map_err(|e| format!("DB lock error: {}", e))?;
     let conn = guard.as_ref().ok_or("No database open")?;
 
-    let ctx = ai::context::build_context(conn, &req.query, req.scene_id.as_deref())?;
+    let mut ctx = ai::context::build_context(conn, &req.query, req.scene_id.as_deref())?;
+
+    // Replace the scene text with the narrower slice the editor is focused on,
+    // keeping entities and cross-scene passages intact.
+    if let Some(override_text) = req.scene_override.as_ref().filter(|s| !s.trim().is_empty()) {
+        ctx.current_scene = Some(override_text.clone());
+    }
 
     Ok(ContextResponse {
         context: ctx.to_prompt_context(Some(&req.query)),

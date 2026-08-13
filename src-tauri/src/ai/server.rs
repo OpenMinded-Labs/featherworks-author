@@ -235,6 +235,30 @@ pub struct Completion {
     pub cached_tokens: usize,
 }
 
+fn build_chat_body(
+    model_id: String,
+    messages: &[(&str, &str)],
+    max_tokens: usize,
+    temperature: f32,
+    thinking: bool,
+    stream: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "model": model_id,
+        "messages": messages
+            .iter()
+            .map(|(role, content)| serde_json::json!({ "role": role, "content": content }))
+            .collect::<Vec<_>>(),
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "stream": stream,
+        // Passed through to the tokenizer's chat template (server.py handles
+        // `chat_template_kwargs` per request), which emits `<|think|>` only
+        // when this is true.
+        "chat_template_kwargs": { "enable_thinking": thinking },
+    })
+}
+
 /// Sends a chat completion to the running server.
 ///
 /// `messages` are (role, content) pairs; the server applies Gemma 4's chat
@@ -268,19 +292,7 @@ pub fn chat(
         (handle.port, handle.model_id.clone())
     };
 
-    let body = serde_json::json!({
-        "model": model_id,
-        "messages": messages
-            .iter()
-            .map(|(role, content)| serde_json::json!({ "role": role, "content": content }))
-            .collect::<Vec<_>>(),
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-        // Passed through to the tokenizer's chat template (server.py handles
-        // `chat_template_kwargs` per request), which emits `<|think|>` only
-        // when this is true.
-        "chat_template_kwargs": { "enable_thinking": thinking },
-    });
+    let body = build_chat_body(model_id, messages, max_tokens, temperature, thinking, false);
 
     let client = reqwest::blocking::Client::builder()
         .timeout(REQUEST_TIMEOUT)
@@ -330,6 +342,103 @@ pub fn chat(
             .and_then(|u| u.pointer("/prompt_tokens_details/cached_tokens"))
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(0) as usize,
+    })
+}
+
+/// Streams a chat completion token-by-token via SSE.
+///
+/// The callback receives only user-visible content deltas (no reasoning block).
+/// Cancellation is handled by dropping the returned future.
+pub async fn chat_stream<F>(
+    messages: &[(&str, &str)],
+    max_tokens: usize,
+    temperature: f32,
+    thinking: bool,
+    mut on_token: F,
+) -> Result<Completion>
+where
+    F: FnMut(String) + Send,
+{
+    let (port, model_id) = {
+        let mut guard = slot().lock().map_err(|_| anyhow!("server lock poisoned"))?;
+        let handle = guard
+            .as_mut()
+            .ok_or_else(|| anyhow!("server not running"))?;
+        if !handle.is_alive() {
+            return Err(anyhow!("server process has exited"));
+        }
+        (handle.port, handle.model_id.clone())
+    };
+
+    let body = build_chat_body(model_id, messages, max_tokens, temperature, thinking, true);
+
+    let client = reqwest::Client::builder().timeout(REQUEST_TIMEOUT).build()?;
+    let mut response = client
+        .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
+        .json(&body)
+        .send()
+        .await?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        return Err(anyhow!("mlx server stream error ({}): {}", status, text));
+    }
+
+    let mut stream_buf = String::new();
+    let mut full_content = String::new();
+
+    while let Some(chunk) = response.chunk().await? {
+        stream_buf.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(idx) = stream_buf.find("\n\n") {
+            let event = stream_buf[..idx].to_string();
+            stream_buf = stream_buf[idx + 2..].to_string();
+
+            for line in event.lines() {
+                let line = line.trim();
+                if !line.starts_with("data:") {
+                    continue;
+                }
+                let payload = line[5..].trim();
+
+                if payload == "[DONE]" {
+                    continue;
+                }
+
+                let value: serde_json::Value = match serde_json::from_str(payload) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                if let Some(err) = value.get("error") {
+                    return Err(anyhow!("mlx server stream error: {}", err));
+                }
+
+                if let Some(delta) = value
+                    .pointer("/choices/0/delta/content")
+                    .and_then(serde_json::Value::as_str)
+                {
+                    if !delta.is_empty() {
+                        on_token(delta.to_string());
+                        full_content.push_str(delta);
+                    }
+                }
+            }
+        }
+    }
+
+    let content = full_content.trim().to_string();
+    if content.is_empty() {
+        return Err(anyhow!(
+            "model produced no answer while streaming (empty content)"
+        ));
+    }
+
+    Ok(Completion {
+        content,
+        prompt_tokens: 0,
+        cached_tokens: 0,
     })
 }
 

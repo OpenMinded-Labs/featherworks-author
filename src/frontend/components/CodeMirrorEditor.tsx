@@ -42,7 +42,11 @@ interface Props {
   findQuery?:string; 
   regex?:boolean; 
   searchApi$?: (api:{ next:()=>void; prev:()=>void; replaceOne:(replacement:string)=>void; replaceAll:(replacement:string)=>void })=>void;
-  commentApi$?: (api:{ getSelection: () => { from:number; to:number; text:string } | null })=>void;
+  commentApi$?: (api:{
+    getSelection: () => { from:number; to:number; text:string } | null;
+    /** Selection plus cursor position, for scoping AI context (see contextScope.ts). */
+    getFocus: () => { selectedText:string; cursorOffset:number } | null;
+  })=>void;
   onSynonymRequest?: (wordInfo: WordInfo | null) => void;
   onSpellErrorClick?: (errorInfo: SpellErrorInfo | null) => void;
   onProofreadingErrorClick?: (errorInfo: ProofreadingErrorInfo | null) => void;
@@ -897,6 +901,19 @@ export const CodeMirrorEditor:React.FC<Props> = ({ value, onChange, command$, fi
         const from = Math.min(sel.from, sel.to);
         const to = Math.max(sel.from, sel.to);
         return { from, to, text: view.state.sliceDoc(from, to) };
+      },
+      // Unlike getSelection this also reports an empty selection, because the
+      // cursor position alone is enough to scope context to a paragraph.
+      getFocus: () => {
+        const view = viewRef.current;
+        if (!view) return null;
+        const sel = view.state.selection.main;
+        const from = Math.min(sel.from, sel.to);
+        const to = Math.max(sel.from, sel.to);
+        return {
+          selectedText: sel.empty ? '' : view.state.sliceDoc(from, to),
+          cursorOffset: sel.head,
+        };
       },
     });
   }, [commentApi$]);

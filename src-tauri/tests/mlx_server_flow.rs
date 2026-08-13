@@ -134,3 +134,53 @@ fn thinking_disabled_answers_within_budget() {
         "empty answer - reasoning block likely re-enabled"
     );
 }
+
+/// Streaming has to deliver the answer in pieces, not as one final blob -
+/// otherwise the chat UI gains nothing over the blocking path.
+#[test]
+#[ignore = "requires model + venv"]
+fn chat_stream_delivers_incremental_tokens() {
+    use featherworks_author::ai::server;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    server::start(&python(), &model_dir()).expect("server failed to start");
+
+    let chunks = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&chunks);
+    let first_token_at = Arc::new(std::sync::Mutex::new(None::<f64>));
+    let stamp = Arc::clone(&first_token_at);
+
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let t = Instant::now();
+    let result = runtime.block_on(server::chat_stream(
+        &[("user", "Zaehle langsam von eins bis zehn.")],
+        256,
+        0.2,
+        false,
+        move |_token| {
+            if counter.fetch_add(1, Ordering::Relaxed) == 0 {
+                *stamp.lock().unwrap() = Some(t.elapsed().as_secs_f64());
+            }
+        },
+    ));
+    let total = t.elapsed().as_secs_f64();
+    server::stop();
+
+    let completion = result.expect("stream failed");
+    let seen = chunks.load(Ordering::Relaxed);
+    println!(
+        "stream: first token after {:?}s, {seen} chunks, {total:.1}s total",
+        first_token_at.lock().unwrap()
+    );
+
+    assert!(!completion.content.is_empty(), "streamed content was empty");
+    assert!(
+        seen > 1,
+        "expected incremental deltas, got {seen} callback(s)"
+    );
+    assert!(
+        !completion.content.contains("<|channel>"),
+        "reasoning leaked into the stream"
+    );
+}

@@ -237,7 +237,7 @@ fn generate_via_server(prompt: &str, token_budget: usize) -> Result<String> {
 /// Any assistant priming (text after `<|assistant|>`) is appended to the user
 /// message: the server owns the final `<|turn>model` marker, so priming cannot
 /// be injected after it.
-fn split_prompt_roles(prompt: &str) -> (String, String) {
+pub(crate) fn split_prompt_roles(prompt: &str) -> (String, String) {
     let mut system = String::new();
     let mut user = String::new();
     let mut priming = String::new();
