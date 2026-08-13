@@ -96,16 +96,47 @@ fn sessions() -> &'static Mutex<Vec<Session>> {
     SESSIONS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
+/// Drops sessions whose task has ended.
+///
+/// Nothing removed entries before, so every chat message leaked a `Session`
+/// with its `JoinHandle` for the lifetime of the process, and `cancel_session`
+/// had to walk an ever-growing list to find the one live entry.
+fn reap_finished(list: &mut Vec<Session>) {
+    list.retain(|s| !s.handle.is_finished());
+}
+
+/// Registers a running session, first clearing out the finished ones.
+fn register_session(id: String, cancel: mpsc::Sender<()>, handle: JoinHandle<()>) {
+    if let Ok(mut list) = sessions().lock() {
+        reap_finished(&mut list);
+        list.push(Session {
+            id,
+            cancel: Some(cancel),
+            handle,
+        });
+    }
+}
+
+/// Number of tracked sessions. Used by tests to prove the list stays bounded.
+#[cfg(test)]
+fn session_count() -> usize {
+    sessions().lock().map(|l| l.len()).unwrap_or(0)
+}
+
 pub fn cancel_session(id: &str) -> bool {
     if let Ok(mut list) = sessions().lock() {
-        if let Some(pos) = list.iter().position(|s| s.id == id) {
+        let found = if let Some(pos) = list.iter().position(|s| s.id == id) {
             if let Some(tx) = list[pos].cancel.take() {
                 let _ = tx.try_send(());
             }
             true
         } else {
             false
-        }
+        };
+        // The cancelled task needs a moment to wind down, so it is not removed
+        // here - the next reap collects it once it has actually ended.
+        reap_finished(&mut list);
+        found
     } else {
         false
     }
@@ -218,13 +249,7 @@ pub fn start_session(app: &AppHandle, prompt: String, mode: Option<String>) -> R
                 }
             });
 
-            if let Ok(mut list) = sessions().lock() {
-                list.push(Session {
-                    id: id.clone(),
-                    cancel: Some(tx_cancel),
-                    handle,
-                });
-            }
+            register_session(id.clone(), tx_cancel, handle);
         }
         "openai" => {
             let api_key = provider_config
@@ -286,13 +311,7 @@ pub fn start_session(app: &AppHandle, prompt: String, mode: Option<String>) -> R
                 }
             });
 
-            if let Ok(mut list) = sessions().lock() {
-                list.push(Session {
-                    id: id.clone(),
-                    cancel: Some(tx_cancel),
-                    handle,
-                });
-            }
+            register_session(id.clone(), tx_cancel, handle);
         }
         _ => {
             // Local LLM (default): prefer true token streaming from the
@@ -383,13 +402,7 @@ pub fn start_session(app: &AppHandle, prompt: String, mode: Option<String>) -> R
                 }
             });
 
-            if let Ok(mut list) = sessions().lock() {
-                list.push(Session {
-                    id: id.clone(),
-                    cancel: Some(tx_cancel),
-                    handle,
-                });
-            }
+            register_session(id.clone(), tx_cancel, handle);
         }
     }
 
@@ -399,6 +412,38 @@ pub fn start_session(app: &AppHandle, prompt: String, mode: Option<String>) -> R
 #[cfg(test)]
 mod tests {
     use super::token_budget_for_mode;
+    use super::{register_session, session_count, sessions};
+    use tokio::sync::mpsc;
+
+    #[test]
+    fn finished_sessions_do_not_accumulate() {
+        // Nothing used to remove entries, so every chat message leaked a
+        // Session for the lifetime of the process.
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+
+        sessions().lock().unwrap().clear();
+
+        for i in 0..50 {
+            let (tx, _rx) = mpsc::channel::<()>(1);
+            register_session(format!("session-{i}"), tx, runtime.spawn(async {}));
+        }
+
+        // Let every spawned task run to completion, then register one more to
+        // trigger a reap. Without it the list would still hold all 51.
+        runtime.block_on(async {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        });
+        let (tx, _rx) = mpsc::channel::<()>(1);
+        register_session("last".into(), tx, runtime.spawn(async {}));
+
+        let count = session_count();
+        assert!(
+            count <= 2,
+            "{count} sessions still tracked after 51 finished ones"
+        );
+
+        sessions().lock().unwrap().clear();
+    }
 
     #[test]
     fn lektorat_gets_a_tight_budget() {

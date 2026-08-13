@@ -99,6 +99,38 @@ fn model_id_for(model_path: &Path) -> String {
     model_path.to_string_lossy().to_string()
 }
 
+/// Kills `mlx_lm server` processes left over from a previous run.
+///
+/// `Drop` and the exit hook handle an orderly shutdown, but neither runs after
+/// a crash or a force quit. Because `start` looks for a *free* port, a stale
+/// server does not collide with the new one - it just keeps several GB of
+/// wired memory for as long as the machine stays up. Two of them were found
+/// alive from earlier sessions while measuring, and they slowed generation
+/// down by roughly 8x.
+///
+/// Matching is deliberately narrow: only our own module invocation with a
+/// `--model` argument. No user filter is needed - killing a process owned by
+/// somebody else fails with EPERM, which is exactly the desired outcome.
+fn kill_stale_servers() {
+    let Ok(output) = Command::new("pgrep")
+        .arg("-f")
+        .arg("mlx_lm server --model")
+        .output()
+    else {
+        return;
+    };
+
+    let own_pid = std::process::id();
+    for pid in String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|l| l.trim().parse::<u32>().ok())
+        .filter(|pid| *pid != own_pid)
+    {
+        log::warn!("[fontaine/server] killing stale server process {pid}");
+        let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
+    }
+}
+
 /// Starts the server and waits until it accepts connections.
 pub fn start(python: &str, model_path: &Path) -> Result<()> {
     let mut guard = slot().lock().map_err(|_| anyhow!("server lock poisoned"))?;
@@ -110,6 +142,9 @@ pub fn start(python: &str, model_path: &Path) -> Result<()> {
         log::warn!("[fontaine/server] previous instance died, restarting");
         *guard = None;
     }
+
+    // A crashed predecessor leaves its server behind holding GBs of memory.
+    kill_stale_servers();
 
     let port = find_free_port()
         .ok_or_else(|| anyhow!("no free port in {}..{}", PORT_RANGE.start, PORT_RANGE.end))?;
@@ -385,45 +420,22 @@ where
         return Err(anyhow!("mlx server stream error ({}): {}", status, text));
     }
 
-    let mut stream_buf = String::new();
+    let mut stream_buf: Vec<u8> = Vec::new();
     let mut full_content = String::new();
 
     while let Some(chunk) = response.chunk().await? {
-        stream_buf.push_str(&String::from_utf8_lossy(&chunk));
+        stream_buf.extend_from_slice(&chunk);
 
-        while let Some(idx) = stream_buf.find("\n\n") {
-            let event = stream_buf[..idx].to_string();
-            stream_buf = stream_buf[idx + 2..].to_string();
-
-            for line in event.lines() {
-                let line = line.trim();
-                if !line.starts_with("data:") {
-                    continue;
+        for event in drain_sse_events(&mut stream_buf) {
+            match event {
+                SseEvent::Delta(delta) => {
+                    full_content.push_str(&delta);
+                    on_token(delta);
                 }
-                let payload = line[5..].trim();
-
-                if payload == "[DONE]" {
-                    continue;
-                }
-
-                let value: serde_json::Value = match serde_json::from_str(payload) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-
-                if let Some(err) = value.get("error") {
+                SseEvent::Error(err) => {
                     return Err(anyhow!("mlx server stream error: {}", err));
                 }
-
-                if let Some(delta) = value
-                    .pointer("/choices/0/delta/content")
-                    .and_then(serde_json::Value::as_str)
-                {
-                    if !delta.is_empty() {
-                        on_token(delta.to_string());
-                        full_content.push_str(delta);
-                    }
-                }
+                SseEvent::Ignored => {}
             }
         }
     }
@@ -446,6 +458,65 @@ fn truncate(s: &str) -> String {
     s.chars().take(200).collect()
 }
 
+/// One decoded SSE event.
+enum SseEvent {
+    /// A visible content delta.
+    Delta(String),
+    /// The server reported an error inside the stream.
+    Error(String),
+    /// Keep-alive, `[DONE]`, reasoning, or anything else we ignore.
+    Ignored,
+}
+
+/// Pulls complete SSE events out of a byte buffer.
+///
+/// Takes bytes rather than a `&str` on purpose: an HTTP chunk can end in the
+/// middle of a multi-byte character. Decoding each chunk on its own turns
+/// "Grün" into "Gr\u{FFFD}" + "\u{FFFD}n" - very visible in German prose.
+/// Only whole events, which always end at an ASCII "\n\n", are decoded.
+fn drain_sse_events(buf: &mut Vec<u8>) -> Vec<SseEvent> {
+    let mut events = Vec::new();
+
+    while let Some(idx) = buf.windows(2).position(|w| w == b"\n\n") {
+        let raw: Vec<u8> = buf.drain(..idx + 2).collect();
+        // The event boundary is ASCII, so what precedes it is a whole number of
+        // characters and this decode cannot split anything.
+        let event = String::from_utf8_lossy(&raw);
+
+        for line in event.lines() {
+            let Some(payload) = line.trim().strip_prefix("data:") else {
+                continue;
+            };
+            let payload = payload.trim();
+
+            if payload.is_empty() || payload == "[DONE]" {
+                continue;
+            }
+
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) else {
+                continue;
+            };
+
+            if let Some(err) = value.get("error") {
+                events.push(SseEvent::Error(err.to_string()));
+                continue;
+            }
+
+            match value
+                .pointer("/choices/0/delta/content")
+                .and_then(serde_json::Value::as_str)
+            {
+                Some(delta) if !delta.is_empty() => {
+                    events.push(SseEvent::Delta(delta.to_string()))
+                }
+                _ => events.push(SseEvent::Ignored),
+            }
+        }
+    }
+
+    events
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,6 +534,103 @@ mod tests {
     fn free_port_is_within_range() {
         let port = find_free_port().expect("no free port for test");
         assert!(PORT_RANGE.contains(&port));
+    }
+
+    /// Collects the visible text from a sequence of raw network chunks.
+    fn stream_text(chunks: &[&[u8]]) -> String {
+        let mut buf = Vec::new();
+        let mut out = String::new();
+        for chunk in chunks {
+            buf.extend_from_slice(chunk);
+            for event in drain_sse_events(&mut buf) {
+                if let SseEvent::Delta(d) = event {
+                    out.push_str(&d);
+                }
+            }
+        }
+        out
+    }
+
+    fn frame(content: &str) -> Vec<u8> {
+        format!(
+            "data: {}\n\n",
+            serde_json::json!({"choices":[{"delta":{"content": content}}]})
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn umlauts_survive_a_chunk_boundary() {
+        // The regression this guards: decoding each chunk on its own turned
+        // "Grün" into "Gr\u{FFFD}" + "\u{FFFD}n". German prose hits this
+        // constantly, so split the frame inside the umlaut's two bytes.
+        let full = frame("Grün");
+        let split_at = full
+            .windows(2)
+            .position(|w| w == [0xC3, 0xBC])
+            .expect("no ü in the frame")
+            + 1;
+
+        let text = stream_text(&[&full[..split_at], &full[split_at..]]);
+        assert_eq!(text, "Grün");
+        assert!(!text.contains('\u{FFFD}'), "replacement char in output");
+    }
+
+    #[test]
+    fn an_event_split_across_chunks_is_held_until_complete() {
+        let full = frame("Hallo Welt");
+        let mid = full.len() / 2;
+
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&full[..mid]);
+        // Half an event is not an event.
+        assert!(drain_sse_events(&mut buf).is_empty());
+
+        buf.extend_from_slice(&full[mid..]);
+        let events = drain_sse_events(&mut buf);
+        assert!(matches!(events.as_slice(), [SseEvent::Delta(d)] if d == "Hallo Welt"));
+        assert!(buf.is_empty(), "buffer not drained");
+    }
+
+    #[test]
+    fn several_events_in_one_chunk_all_arrive() {
+        let mut chunk = frame("Eins");
+        chunk.extend(frame(" zwei"));
+        chunk.extend(frame(" drei"));
+        assert_eq!(stream_text(&[&chunk]), "Eins zwei drei");
+    }
+
+    #[test]
+    fn done_and_keepalive_frames_are_ignored() {
+        let mut chunk = b": keep-alive\n\n".to_vec();
+        chunk.extend(frame("Text"));
+        chunk.extend(b"data: [DONE]\n\n");
+        assert_eq!(stream_text(&[&chunk]), "Text");
+    }
+
+    #[test]
+    fn errors_inside_the_stream_are_surfaced() {
+        let mut buf = b"data: {\"error\":\"model exploded\"}\n\n".to_vec();
+        let events = drain_sse_events(&mut buf);
+        assert!(matches!(events.as_slice(), [SseEvent::Error(_)]));
+    }
+
+    #[test]
+    fn malformed_json_does_not_abort_the_stream() {
+        let mut chunk = b"data: {not json\n\n".to_vec();
+        chunk.extend(frame("weiter"));
+        assert_eq!(stream_text(&[&chunk]), "weiter");
+    }
+
+    #[test]
+    fn a_byte_at_a_time_still_reassembles() {
+        // Worst case the network can hand us.
+        let mut chunk = frame("Zrassha grüßt Sierrkha");
+        chunk.extend(frame(" — und tschüß."));
+        let singles: Vec<Vec<u8>> = chunk.iter().map(|b| vec![*b]).collect();
+        let refs: Vec<&[u8]> = singles.iter().map(|v| v.as_slice()).collect();
+
+        assert_eq!(stream_text(&refs), "Zrassha grüßt Sierrkha — und tschüß.");
     }
 
     #[test]

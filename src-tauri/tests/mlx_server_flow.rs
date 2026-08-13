@@ -215,3 +215,86 @@ fn chat_stream_delivers_incremental_tokens() {
         "reasoning leaked into the stream"
     );
 }
+
+/// German prose is full of multi-byte characters, and an HTTP chunk can end in
+/// the middle of one. Decoding chunks individually turned "Grün" into
+/// "Gr\u{FFFD}\u{FFFD}n"; this checks the real wire, not just the unit tests.
+#[test]
+#[ignore = "requires model + venv"]
+fn streamed_umlauts_are_not_mangled() {
+    use featherworks_author::ai::server;
+
+    server::start(&python(), &model_dir()).expect("server failed to start");
+
+    let streamed = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let sink = std::sync::Arc::clone(&streamed);
+
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let result = runtime.block_on(server::chat_stream(
+        &[(
+            "user",
+            "Gib exakt diesen Satz woertlich zurueck, ohne Kommentar: \
+             Die Bäckerin grüßt größtenteils fröhlich über die Straße.",
+        )],
+        256,
+        0.0,
+        false,
+        move |token| sink.lock().unwrap().push_str(&token),
+    ));
+    server::stop();
+
+    let completion = result.expect("stream failed");
+    let live = streamed.lock().unwrap().clone();
+    println!("streamed: {live:?}");
+
+    assert!(
+        !live.contains('\u{FFFD}'),
+        "replacement character in streamed text: {live:?}"
+    );
+    // Whatever the model echoes back, the pieces must reassemble to the whole.
+    assert_eq!(
+        live.trim(),
+        completion.content,
+        "streamed text differs from the assembled answer"
+    );
+    assert!(
+        live.contains('ä') || live.contains('ü') || live.contains('ö') || live.contains('ß'),
+        "no multi-byte character in the answer, test proves nothing: {live:?}"
+    );
+}
+
+/// A crash or force quit leaves the server running, holding several GB. Since
+/// `start` picks a *free* port it would not collide - the stale process would
+/// simply live on. Two were found alive during a measurement session and made
+/// generation about 8x slower.
+#[test]
+#[ignore = "requires model + venv"]
+fn a_stale_server_is_cleaned_up_on_start() {
+    use featherworks_author::ai::server;
+    use std::process::{Command, Stdio};
+
+    // Spawn a server the way a crashed predecessor would have left one behind.
+    let mut orphan = Command::new(python())
+        .args(["-m", "mlx_lm", "server", "--model"])
+        .arg(model_dir())
+        .args(["--port", "8774", "--host", "127.0.0.1"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("failed to spawn the orphan");
+
+    let orphan_pid = orphan.id();
+    std::thread::sleep(std::time::Duration::from_secs(3));
+
+    server::start(&python(), &model_dir()).expect("server failed to start");
+    server::stop();
+
+    // `try_wait` reports an exit status once the process is gone.
+    let status = orphan.try_wait().expect("try_wait failed");
+    assert!(
+        status.is_some(),
+        "stale server {orphan_pid} survived startup"
+    );
+
+    let _ = orphan.kill();
+}

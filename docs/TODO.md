@@ -18,8 +18,14 @@ Details, Messwerte und verifizierte Fallstricke: **`docs/LLM-STATUS.md`**
   - Setzt stabiles Prompt-Präfix voraus (Instruktion ans Ende)
   - Sliding Window (512, 30/35 Layer) macht Persistenz heikel — erst messen
 - [ ] **EAGLE/MTP-Draft-Head** für ~2× Speed
-  - Modell liegt bereits: `resources/models/gemma-4-e2b-assistant-mtp`
-  - Braucht eigene MLX-Implementierung oder Wechsel auf llama.cpp/GGUF
+  - `mlx_lm` kann spekulatives Decoding bereits (`--draft-model`, auch im
+    Server) — zuerst nach einem kleinen eigenständigen `gemma4_text`-Modell
+    mit Vocab 262144 suchen, das wäre nur ein Startflag
+  - Der MTP-Head selbst lädt nicht (`gemma4_assistant` nicht unterstützt) und
+    teilt den KV-Cache des Backbones → eigene MLX-Implementierung oder GGUF
+- [x] **Verwaiste Modellserver aufräumen** — nach Crash/Force-Quit lief der
+      Server weiter und hielt GB; machte Generierung ~8× langsamer
+- [x] **Memory-Leak bei langem AI-Streaming** — Sessions wurden nie entfernt
 - [ ] Thinking-Primer als Task-Flag (Extraktion an, Lektorat aus)
 - [ ] Evaluation über mehrere Werke statt nur Martyria 1
 - [x] **Kontext-Kuratierung: Entity-Heuristik** — nur genannte Entitäten mit

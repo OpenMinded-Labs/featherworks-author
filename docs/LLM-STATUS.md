@@ -230,6 +230,37 @@ Blocker:
 oder Wechsel auf llama.cpp/GGUF, wo die Kopplung fertig ist
 (`Architecture: gemma4-assistant`).
 
+#### Nachtrag 13.08.2026 — spekulatives Decoding ist in mlx_lm bereits da
+
+Im README nicht erwähnt, aber in 0.31.3 vorhanden — geprüft mit `--help`:
+
+```text
+--draft-model DRAFT_MODEL        A model to be used for speculative decoding.
+--num-draft-tokens NUM_DRAFT_TOKENS
+```
+
+Auch in `mlx_lm.server`, nicht nur in `generate`. Der Server verlangt
+identische `vocab_size` (`server.py:364`) — unser Hauptmodell hat 262144, das
+MTP-Modell ebenfalls. Sobald ein Draft-Modell lädt, ist es also ein reines
+Startflag, kein Umbau des Server-Pfads.
+
+Was weiterhin **nicht** geht, verifiziert:
+
+```text
+>>> load('resources/models/gemma-4-e2b-assistant-mtp')
+ValueError: Model type gemma4_assistant not supported.
+```
+
+Damit zerfällt Punkt 3 in zwei getrennte Wege:
+
+1. **Billig**: irgendein kleines eigenständiges `gemma4_text`-Modell mit
+   Vocab 262144 als `--draft-model`. Kein Code, nur ein Flag und ein Modell.
+   Offen ist, ob so ein Modell existiert — E2B ist bereits das kleinste der
+   Reihe. Vor jedem Implementierungsaufwand zuerst hier suchen.
+2. **Teuer**: der MTP-Head selbst, weil er kein eigenständiges Modell ist
+   (teilt den KV-Cache des Backbones) — bleibt eigene Implementierung oder
+   llama.cpp.
+
 ### 3b. Python-Runtime beim Kunden — Entscheidung: Embedded Python
 
 **Fällig vor der Closed Alpha**, nicht vorher. In Development läuft Fontaine
