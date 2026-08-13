@@ -21,6 +21,7 @@ import type { WordInfo } from './SynonymTooltip';
 import type { SpellErrorInfo } from './SpellcheckTooltip';
 import type { EntityTooltipInfo } from './EntityTooltip';
 import type { SelectionInfo } from './EditorContextMenu';
+import { paragraphRangeAt, type MarkedRange } from '../contextScope';
 
 // Extended error info for all issue types
 export interface ProofreadingErrorInfo {
@@ -44,8 +45,8 @@ interface Props {
   searchApi$?: (api:{ next:()=>void; prev:()=>void; replaceOne:(replacement:string)=>void; replaceAll:(replacement:string)=>void })=>void;
   commentApi$?: (api:{
     getSelection: () => { from:number; to:number; text:string } | null;
-    /** Selection plus cursor position, for scoping AI context (see contextScope.ts). */
-    getFocus: () => { selectedText:string; cursorOffset:number } | null;
+    /** Selection plus the paragraphs the user marked, for scoping AI context (see contextScope.ts). */
+    getFocus: () => { selectedText:string; markedParagraphs: MarkedRange[] } | null;
   })=>void;
   onSynonymRequest?: (wordInfo: WordInfo | null) => void;
   onSpellErrorClick?: (errorInfo: SpellErrorInfo | null) => void;
@@ -83,7 +84,88 @@ const searchDecoField = StateField.define<DecorationSet>({
   provide: f => EditorView.decorations.from(f)
 });
 
+// ---- Paragraph marking: the user picks what Fontaine sees ----
+//
+// Nothing here is inferred. Earlier the cursor position decided the AI
+// context, which meant an editor that had never been touched still reported a
+// cursor at offset 0 and silently narrowed every request to the first
+// paragraph. Marks are explicit, visible and persistent instead.
+
+const toggleParagraphMark = StateEffect.define<{ from: number; to: number }>();
+const clearParagraphMarks = StateEffect.define<null>();
+
+const paragraphMarkDeco = Decoration.mark({ class: 'cm-context-paragraph' });
+
+const paragraphMarkField = StateField.define<DecorationSet>({
+  create() { return Decoration.none; },
+  update(marks, tr) {
+    // Marks stay glued to their text while the user keeps writing above them.
+    marks = marks.map(tr.changes);
+
+    for (const e of tr.effects) {
+      if (e.is(clearParagraphMarks)) {
+        marks = Decoration.none;
+        continue;
+      }
+      if (!e.is(toggleParagraphMark)) continue;
+
+      const { from, to } = e.value;
+      // Collect into an array rather than a single variable: assigning inside
+      // the callback would leave TypeScript narrowing it to `null`.
+      const existing: Array<{ from: number; to: number }> = [];
+      marks.between(from, to, (mFrom, mTo) => {
+        existing.push({ from: mFrom, to: mTo });
+      });
+
+      marks = existing.length > 0
+        ? marks.update({
+            filter: (f, t) => !existing.some(x => x.from === f && x.to === t),
+          })
+        : marks.update({ add: [paragraphMarkDeco.range(from, to)] });
+    }
+    return marks;
+  },
+  provide: f => EditorView.decorations.from(f)
+});
+
+/** The marked ranges, in document order. */
+function readParagraphMarks(state: EditorState): Array<{ from: number; to: number }> {
+  const out: Array<{ from: number; to: number }> = [];
+  state.field(paragraphMarkField).between(0, state.doc.length, (from, to) => {
+    out.push({ from, to });
+  });
+  return out;
+}
+
+/**
+ * A click toggles the paragraph under the pointer.
+ *
+ * The event is deliberately *not* consumed: CodeMirror still places the caret,
+ * so clicking to write behaves exactly as before. Marking is a side effect the
+ * user can undo by clicking the same paragraph again.
+ */
+const paragraphMarkClick = EditorView.domEventHandlers({
+  mousedown(event, view) {
+    // Only a plain primary click. Shift-click extends a selection, and the
+    // context menu should never change what Fontaine reads.
+    if (event.button !== 0 || event.shiftKey) return false;
+
+    const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+    if (pos == null) return false;
+
+    const paragraph = paragraphRangeAt(view.state.doc.toString(), pos);
+    // Clicking a blank line between paragraphs marks nothing.
+    if (!paragraph) return false;
+
+    view.dispatch({
+      effects: toggleParagraphMark.of({ from: paragraph.from, to: paragraph.to }),
+    });
+    return false; // let CodeMirror move the caret
+  },
+});
+
 // Spellcheck state - managed via StateEffect for async updates
+
 let currentEditorLanguage: 'de' | 'en' = 'de';
 let currentSpellErrors: SpellError[] = [];
 let currentLtIssues: LtIssue[] = [];
@@ -569,6 +651,8 @@ export const CodeMirrorEditor:React.FC<Props> = ({ value, onChange, command$, fi
         repetitionField,
         entityHighlightField,
         lektoratHighlightField,
+        paragraphMarkField,
+        paragraphMarkClick,
         EditorView.updateListener.of(v => {
           if(v.docChanged){ 
             onChange(v.state.doc.toString());
@@ -873,7 +957,9 @@ export const CodeMirrorEditor:React.FC<Props> = ({ value, onChange, command$, fi
   // external value change (e.g. scene switch)
   useEffect(()=>{
     const view = viewRef.current; if(!view) return; const current = view.state.doc.toString();
-    if(current !== value){ view.dispatch({ changes: { from:0, to: current.length, insert:value } }); }
+    // The whole document is replaced here, so any surviving marks would point
+    // at unrelated text in the new scene. Drop them.
+    if(current !== value){ view.dispatch({ changes: { from:0, to: current.length, insert:value }, effects: clearParagraphMarks.of(null) }); }
   },[value]);
 
   useEffect(()=>{ applySearch(findQuery); },[findQuery, regex]);
@@ -903,7 +989,7 @@ export const CodeMirrorEditor:React.FC<Props> = ({ value, onChange, command$, fi
         return { from, to, text: view.state.sliceDoc(from, to) };
       },
       // Unlike getSelection this also reports an empty selection, because the
-      // cursor position alone is enough to scope context to a paragraph.
+      // marked paragraphs alone are enough to scope the context.
       getFocus: () => {
         const view = viewRef.current;
         if (!view) return null;
@@ -912,7 +998,7 @@ export const CodeMirrorEditor:React.FC<Props> = ({ value, onChange, command$, fi
         const to = Math.max(sel.from, sel.to);
         return {
           selectedText: sel.empty ? '' : view.state.sliceDoc(from, to),
-          cursorOffset: sel.head,
+          markedParagraphs: readParagraphMarks(view.state),
         };
       },
     });

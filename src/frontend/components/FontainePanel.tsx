@@ -1117,7 +1117,7 @@ Give me:
 
   // Which slice of the scene the model currently sees. Shown in the UI because
   // otherwise identical questions give different answers for no visible reason.
-  const [activeScope, setActiveScope] = useState<{ scope: ContextScope; paragraphIndex?: number }>({ scope: 'scene' });
+  const [activeScope, setActiveScope] = useState<{ scope: ContextScope; paragraphIndices?: number[] }>({ scope: 'scene' });
 
   // The scope has to be visible *before* sending, otherwise the label always
   // describes the previous request. CodeMirror emits no cursor event we can
@@ -1129,12 +1129,15 @@ Give me:
   focusRef.current = getEditorFocus;
 
   useEffect(() => {
+    const sameIndices = (a?: number[], b?: number[]) =>
+      a === b || (!!a && !!b && a.length === b.length && a.every((v, i) => v === b[i]));
+
     const tick = () => {
       const scoped = resolveContextScope(sceneContent, focusRef.current?.() ?? null);
       setActiveScope(prev =>
-        prev.scope === scoped.scope && prev.paragraphIndex === scoped.paragraphIndex
+        prev.scope === scoped.scope && sameIndices(prev.paragraphIndices, scoped.paragraphIndices)
           ? prev
-          : { scope: scoped.scope, paragraphIndex: scoped.paragraphIndex },
+          : { scope: scoped.scope, paragraphIndices: scoped.paragraphIndices },
       );
     };
     tick();
@@ -1145,10 +1148,10 @@ Give me:
 
   // Build context string using RAG from backend
   const buildContext = useCallback(async (query: string): Promise<string> => {
-    // Selection beats paragraph beats whole scene.
+    // Marked paragraphs beat selection beats whole scene.
     const focus = getEditorFocus?.() ?? null;
     const scoped = resolveContextScope(sceneContent, focus);
-    setActiveScope({ scope: scoped.scope, paragraphIndex: scoped.paragraphIndex });
+    setActiveScope({ scope: scoped.scope, paragraphIndices: scoped.paragraphIndices });
 
     try {
       // Try to get RAG context from backend (includes entities, relevant scenes)
@@ -1780,7 +1783,11 @@ Give me:
             📄 {t('fontaine.sceneActive')} {t('fontaine.wordsCount', { count: sceneContent?.split(/\s+/).length || 0 })}
             {' · '}
             {activeScope.scope === 'selection' && 'Kontext: Auswahl'}
-            {activeScope.scope === 'paragraph' && `Kontext: Absatz ${activeScope.paragraphIndex ?? '?'}`}
+            {activeScope.scope === 'paragraphs' && (
+              (activeScope.paragraphIndices ?? []).length === 1
+                ? `Kontext: Absatz ${activeScope.paragraphIndices![0]}`
+                : `Kontext: Absätze ${(activeScope.paragraphIndices ?? []).join(', ')}`
+            )}
             {activeScope.scope === 'scene' && 'Kontext: ganze Szene'}
           </span>
         ) : (

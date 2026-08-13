@@ -33,7 +33,7 @@ export const EditorPane: React.FC<{
   lektoratHighlight?: { from: number; to: number; id?: string } | null;
   commentApi$?: (api:{
     getSelection: () => { from:number; to:number; text:string } | null;
-    getFocus: () => { selectedText:string; cursorOffset:number } | null;
+    getFocus: () => { selectedText:string; markedParagraphs: { from:number; to:number }[] } | null;
   })=>void;
   // Context menu callbacks
   onOpenThesaurus?: (word: string) => void;

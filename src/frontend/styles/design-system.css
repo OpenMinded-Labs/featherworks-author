@@ -1373,6 +1373,28 @@ input:hover, textarea:hover, select:hover {
 [data-theme="sepia"] .cm-repetition-error { text-decoration-color: #a3456c !important; background-color: rgba(163, 69, 108, 0.1) !important; }
 
 /* ================================
+   Paragraphs marked as Fontaine context
+   ================================ */
+/* A tinted band plus a left rule. Deliberately not an underline or a
+   squiggle, so it cannot be confused with a spelling or grammar issue, and
+   subtle enough to sit under entity highlights without fighting them. */
+.cm-context-paragraph {
+  background-color: rgba(90, 130, 200, 0.10);
+  box-shadow: inset 2px 0 0 rgba(90, 130, 200, 0.55);
+  border-radius: 2px;
+}
+
+[data-theme="dark"] .cm-context-paragraph {
+  background-color: rgba(130, 170, 240, 0.14);
+  box-shadow: inset 2px 0 0 rgba(130, 170, 240, 0.6);
+}
+
+[data-theme="sepia"] .cm-context-paragraph {
+  background-color: rgba(140, 110, 70, 0.14);
+  box-shadow: inset 2px 0 0 rgba(140, 110, 70, 0.6);
+}
+
+/* ================================
    Entity Highlighting in Editor
    ================================ */
 .cm-entity-highlight {

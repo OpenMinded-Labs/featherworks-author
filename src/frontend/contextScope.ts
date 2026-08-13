@@ -2,27 +2,44 @@
  * Decides which slice of a scene the model should see.
  *
  * Feeding the whole scene is wrong for local edits: asked to "rephrase this",
- * the model cannot tell which part is meant. Feeding only a paragraph is wrong
+ * the model cannot tell which part is meant. Feeding only a fragment is wrong
  * for questions about the scene as a whole.
  *
- * Rule: an explicit selection wins, otherwise the paragraph under the cursor,
- * otherwise the whole scene.
+ * The user decides explicitly by marking paragraphs in the editor. Nothing is
+ * inferred from the cursor: an editor that was never touched still reports a
+ * cursor at offset 0, which used to silently narrow every request to the first
+ * paragraph.
+ *
+ * Rule: marked paragraphs win, otherwise a substantial selection, otherwise
+ * the whole scene.
  */
 
-export type ContextScope = 'selection' | 'paragraph' | 'scene';
+export type ContextScope = 'selection' | 'paragraphs' | 'scene';
+
+/** A range of the document the user marked as relevant. */
+export interface MarkedRange {
+  from: number;
+  to: number;
+}
 
 export interface EditorFocus {
   /** Text of the current selection, empty when nothing is selected. */
   selectedText: string;
-  /** Cursor offset in the document, used to locate the paragraph. */
-  cursorOffset: number;
+  /** Paragraphs the user explicitly marked. Empty means "no opinion". */
+  markedParagraphs: MarkedRange[];
 }
 
 export interface ScopedContext {
   text: string;
   scope: ContextScope;
-  /** 1-based paragraph number, only set for scope === 'paragraph'. */
-  paragraphIndex?: number;
+  /** 1-based paragraph numbers, only set for scope === 'paragraphs'. */
+  paragraphIndices?: number[];
+}
+
+export interface Paragraph {
+  text: string;
+  from: number;
+  to: number;
 }
 
 /** Paragraphs are separated by one or more blank lines. */
@@ -31,7 +48,7 @@ const PARAGRAPH_SEPARATOR = /\n\s*\n/;
 /**
  * Fallback separator. Not every manuscript uses blank lines - prose written
  * with a single newline per paragraph would otherwise collapse into one block
- * and never scope to a paragraph at all.
+ * and could never be marked paragraph by paragraph.
  */
 const SINGLE_NEWLINE_SEPARATOR = /\n/;
 
@@ -41,8 +58,8 @@ const SINGLE_NEWLINE_SEPARATOR = /\n/;
  */
 const MIN_SELECTION_CHARS = 15;
 
-function splitOn(text: string, separator: RegExp): Array<{ text: string; from: number; to: number }> {
-  const result: Array<{ text: string; from: number; to: number }> = [];
+function splitOn(text: string, separator: RegExp): Paragraph[] {
+  const result: Paragraph[] = [];
   let offset = 0;
 
   for (const chunk of text.split(separator)) {
@@ -58,10 +75,15 @@ function splitOn(text: string, separator: RegExp): Array<{ text: string; from: n
 }
 
 /**
- * Splits into paragraphs while keeping each one's offset range, so a cursor
+ * Splits into paragraphs while keeping each one's offset range, so a click
  * position can be mapped back to the paragraph containing it.
+ *
+ * This is the single definition of "paragraph" in the app: the editor uses it
+ * to decide what a click marks, and the context builder uses it to decide what
+ * the model sees. If the two disagreed, the highlight would not match the
+ * context the model actually gets.
  */
-export function splitParagraphs(text: string): Array<{ text: string; from: number; to: number }> {
+export function splitParagraphs(text: string): Paragraph[] {
   const byBlankLine = splitOn(text, PARAGRAPH_SEPARATOR);
   if (byBlankLine.length > 1) return byBlankLine;
 
@@ -71,39 +93,37 @@ export function splitParagraphs(text: string): Array<{ text: string; from: numbe
   return byNewline.length > byBlankLine.length ? byNewline : byBlankLine;
 }
 
-/** Paragraph containing `offset`, or null if the scene has none. */
-export function paragraphAt(
+/**
+ * The paragraph containing `offset`, or null when the offset sits in the gap
+ * between paragraphs (a blank line).
+ */
+export function paragraphRangeAt(
   text: string,
   offset: number,
-): { text: string; index: number } | null {
+): (Paragraph & { index: number }) | null {
   const paragraphs = splitParagraphs(text);
-  if (paragraphs.length === 0) return null;
 
   for (let i = 0; i < paragraphs.length; i++) {
     const p = paragraphs[i];
-    // `to` is inclusive here: a cursor resting at the end of a paragraph still
-    // belongs to it, not to the next one.
+    // `to` is inclusive: a click at the very end of a paragraph belongs to it.
     if (offset >= p.from && offset <= p.to) {
-      return { text: p.text, index: i + 1 };
+      return { ...p, index: i + 1 };
     }
   }
 
-  // Cursor sits in the gap between paragraphs (or past the end): use the last
-  // paragraph that starts before it.
-  const preceding = paragraphs.filter((p) => p.from <= offset);
-  if (preceding.length > 0) {
-    const last = preceding[preceding.length - 1];
-    return { text: last.text, index: preceding.length };
-  }
+  return null;
+}
 
-  return { text: paragraphs[0].text, index: 1 };
+/** Do two ranges share at least one character? */
+function overlaps(a: MarkedRange, b: { from: number; to: number }): boolean {
+  return a.from < b.to && a.to > b.from;
 }
 
 /**
  * Picks the context for a request.
  *
- * `focus` is null when the editor has no cursor (panel opened without focus),
- * in which case the whole scene is used.
+ * `focus` is null when the editor is not mounted, in which case the whole
+ * scene is used.
  */
 export function resolveContextScope(
   sceneContent: string,
@@ -113,22 +133,28 @@ export function resolveContextScope(
     return { text: '', scope: 'scene' };
   }
 
+  // Marks beat a selection: they are visible and persistent, so the user has
+  // committed to them, while a selection can happen by accident (a stray drag,
+  // a double-clicked word).
+  const marks = focus?.markedParagraphs ?? [];
+  if (marks.length > 0) {
+    const chosen = splitParagraphs(sceneContent)
+      .map((paragraph, i) => ({ paragraph, index: i + 1 }))
+      .filter(({ paragraph }) => marks.some((m) => overlaps(m, paragraph)));
+
+    if (chosen.length > 0) {
+      return {
+        // Always in document order, regardless of the order they were clicked.
+        text: chosen.map((c) => c.paragraph.text).join('\n\n'),
+        scope: 'paragraphs',
+        paragraphIndices: chosen.map((c) => c.index),
+      };
+    }
+  }
+
   const selection = focus?.selectedText?.trim() ?? '';
   if (selection.length >= MIN_SELECTION_CHARS) {
     return { text: selection, scope: 'selection' };
-  }
-
-  if (focus && sceneContent.length > 0) {
-    const paragraph = paragraphAt(sceneContent, focus.cursorOffset);
-    // A single paragraph that is nearly the whole scene adds no focus, so keep
-    // the scene label rather than pretending to have narrowed anything.
-    if (paragraph && paragraph.text.length < sceneContent.length * 0.9) {
-      return {
-        text: paragraph.text,
-        scope: 'paragraph',
-        paragraphIndex: paragraph.index,
-      };
-    }
   }
 
   return { text: sceneContent, scope: 'scene' };

@@ -466,7 +466,7 @@ function App() {
     const [humanComments, setHumanComments] = useState<Array<{ id:string; from:number; to:number; text:string; note:string; suggestion?:string; status:'open'|'accepted'|'rejected' }>>([]);
     const commentApiRef = useRef<{
         getSelection: ()=> { from:number; to:number; text:string } | null;
-        getFocus: ()=> { selectedText:string; cursorOffset:number } | null;
+        getFocus: ()=> { selectedText:string; markedParagraphs: { from:number; to:number }[] } | null;
     } | null>(null);
     
     // Auto-Paragraph Dialog State
