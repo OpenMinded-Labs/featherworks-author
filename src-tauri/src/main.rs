@@ -2855,6 +2855,10 @@ struct BuildContextRequest {
     /// that receives the whole scene cannot tell which part is meant.
     #[serde(rename = "sceneOverride")]
     scene_override: Option<String>,
+    /// The last few chat turns, used only to resolve a question that names
+    /// nobody ("hat er nochmal?", "gibt es dort ...?").
+    #[serde(rename = "recentTurns")]
+    recent_turns: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -2888,7 +2892,7 @@ fn build_fontaine_context(
     }
 
     Ok(ContextResponse {
-        context: ctx.to_prompt_context(Some(&req.query)),
+        context: ctx.to_prompt_context(Some(&req.query), req.recent_turns.as_deref()),
         entity_count: ctx.entities.len(),
         relevant_scene_count: ctx.relevant_scenes.len(),
         total_chars: ctx.total_chars,

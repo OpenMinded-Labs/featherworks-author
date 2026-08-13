@@ -45,11 +45,20 @@ enum EntityRelevance {
 /// what users actually type when asking about a character, while broader
 /// stemming would start matching unrelated words again.
 fn mentions_word(haystack_lower: &str, name: &str) -> bool {
+    last_mention_pos(haystack_lower, name).is_some()
+}
+
+/// Start offset of the *last* whole-word occurrence of `name`, if any.
+///
+/// The last one rather than the first, because the caller uses it to decide
+/// which entity a pronoun refers to, and that is the most recently named one.
+fn last_mention_pos(haystack_lower: &str, name: &str) -> Option<usize> {
     let needle = name.trim().to_lowercase();
     if needle.is_empty() {
-        return false;
+        return None;
     }
 
+    let mut found = None;
     let mut from = 0;
     while let Some(idx) = haystack_lower[from..].find(&needle) {
         let start = from + idx;
@@ -72,7 +81,7 @@ fn mentions_word(haystack_lower: &str, name: &str) -> bool {
             || rest.strip_prefix("'s").is_some_and(after_ok);
 
         if before_ok && (after_ok(rest) || genitive_ok) {
-            return true;
+            found = Some(start);
         }
         // Advance past this position; needle is non-empty so this terminates.
         from = start + needle.chars().next().map(char::len_utf8).unwrap_or(1);
@@ -80,7 +89,7 @@ fn mentions_word(haystack_lower: &str, name: &str) -> bool {
             break;
         }
     }
-    false
+    found
 }
 
 /// Every string by which an entity can be addressed: the full name, each part
@@ -172,11 +181,41 @@ pub struct FontaineContext {
 }
 
 impl FontaineContext {
+    /// The entity mentioned last in `recent_lower`, if any.
+    ///
+    /// Used to resolve "hat er nochmal?" or "gibt es dort ...?" - the question
+    /// names nobody, so the subject can only come from what was just being
+    /// discussed. Position decides, not database order: the most recent mention
+    /// wins, which is what "er" refers to in ordinary speech.
+    fn last_mentioned(&self, recent_lower: &str) -> Option<&ContextEntity> {
+        self.entities
+            .iter()
+            .filter_map(|entity| {
+                lookup_terms(entity)
+                    .iter()
+                    .filter_map(|term| last_mention_pos(recent_lower, term))
+                    .max()
+                    .map(|pos| (entity, pos))
+            })
+            .max_by_key(|(_, pos)| *pos)
+            .map(|(entity, _)| entity)
+    }
+
     /// Rates every entity against the question and the scene at hand.
     ///
     /// Split out from `to_prompt_context` so the ranking can be tested without
     /// building a whole prompt.
-    fn rank_entities(&self, query_hint: Option<&str>) -> Vec<(&ContextEntity, EntityRelevance)> {
+    ///
+    /// `recent_hint` carries the last few chat turns. It is only consulted when
+    /// the question itself names nobody - otherwise every character ever
+    /// discussed would stay promoted and the whole point of ranking would be
+    /// lost. Guessing one subject is acceptable; if the guess is wrong the user
+    /// can simply name who they mean.
+    fn rank_entities(
+        &self,
+        query_hint: Option<&str>,
+        recent_hint: Option<&str>,
+    ) -> Vec<(&ContextEntity, EntityRelevance)> {
         let query_lower = query_hint.map(|q| q.to_lowercase()).unwrap_or_default();
         let scene_lower = self
             .current_scene
@@ -205,6 +244,24 @@ impl FontaineContext {
             })
             .collect();
 
+        // Nobody was named. Fall back to whoever was last being talked about,
+        // so "hat er nochmal?" and "gibt es dort ...?" keep their subject.
+        // Only one entity is promoted, and only when the question names none -
+        // a wrong guess costs one description, and the user can name the
+        // subject explicitly to override it.
+        if !rated
+            .iter()
+            .any(|(_, r)| *r == EntityRelevance::InQuery)
+        {
+            if let Some(recent) = recent_hint.filter(|r| !r.trim().is_empty()) {
+                if let Some(subject) = self.last_mentioned(&recent.to_lowercase()) {
+                    if let Some(slot) = rated.iter_mut().find(|(e, _)| e.id == subject.id) {
+                        slot.1 = EntityRelevance::InQuery;
+                    }
+                }
+            }
+        }
+
         // Highest relevance first; ties keep the database order (type, name) so
         // the prompt prefix stays stable across requests and the KV cache hits.
         rated.sort_by(|a, b| b.1.cmp(&a.1));
@@ -212,8 +269,14 @@ impl FontaineContext {
     }
 
     /// Format context as a string for the LLM prompt
-    /// query_hint: optional query to prioritize relevant entities
-    pub fn to_prompt_context(&self, query_hint: Option<&str>) -> String {
+    ///
+    /// query_hint: the question, used to prioritise entities
+    /// recent_hint: the last few chat turns, used only to resolve pronouns
+    pub fn to_prompt_context(
+        &self,
+        query_hint: Option<&str>,
+        recent_hint: Option<&str>,
+    ) -> String {
         let mut parts = Vec::new();
 
         // Project title
@@ -229,7 +292,7 @@ impl FontaineContext {
         if !self.entities.is_empty() {
             parts.push("\n🎭 Bekannte Figuren & Elemente:".to_string());
 
-            let rated = self.rank_entities(query_hint);
+            let rated = self.rank_entities(query_hint, recent_hint);
             let mut described = 0;
             let mut roster: Vec<String> = Vec::new();
 
@@ -780,7 +843,7 @@ mod tests {
             Some("Herbert stand am Fenster."),
         );
 
-        let ranked = ctx.rank_entities(Some("Was denkt Marla?"));
+        let ranked = ctx.rank_entities(Some("Was denkt Marla?"), None);
         assert_eq!(ranked[0].0.name, "Marla");
         assert_eq!(ranked[0].1, EntityRelevance::InQuery);
         // Herbert is not asked about, but he is in the scene.
@@ -791,7 +854,7 @@ mod tests {
     #[test]
     fn aliases_count_as_mentions() {
         let ctx = context_with(vec![entity("Herbert", "Herbi, Bert", "Sachse.")], None);
-        let ranked = ctx.rank_entities(Some("Wo ist Herbi?"));
+        let ranked = ctx.rank_entities(Some("Wo ist Herbi?"), None);
         assert_eq!(ranked[0].1, EntityRelevance::InQuery);
     }
 
@@ -810,11 +873,82 @@ mod tests {
             Some("Marla stand allein am Fenster und wartete."),
         );
 
-        let prompt = ctx.to_prompt_context(Some("Welche Augenfarbe hat Jack nochmal?"));
+        let prompt = ctx.to_prompt_context(Some("Welche Augenfarbe hat Jack nochmal?"), None);
         assert!(
             prompt.contains("Grüne Augen"),
             "asked about Jack but his description never reached the prompt:\n{prompt}"
         );
+    }
+
+    /// "Welche Augenfarbe hat er nochmal?" - the question names nobody, so the
+    /// subject has to come from what was just being discussed.
+    #[test]
+    fn a_pronoun_falls_back_to_the_last_discussed_entity() {
+        let ctx = context_with(
+            vec![
+                entity("Jack Smith", "", "GEHEIM-JACK"),
+                entity("Marla", "", "GEHEIM-MARLA"),
+                entity("Nordwind", "", "GEHEIM-SCHIFF"),
+            ],
+            None,
+        );
+
+        // Marla comes up first, Jack last - "er" means Jack.
+        let history = "User: Was treibt Marla an?\n\
+                       Fontaine: Marla will weg.\n\
+                       User: Und Jack?\n\
+                       Fontaine: Jack bleibt.";
+
+        let prompt = ctx.to_prompt_context(Some("Welche Augenfarbe hat er nochmal?"), Some(history));
+        assert!(prompt.contains("GEHEIM-JACK"), "last subject was not restored");
+        assert!(
+            !prompt.contains("GEHEIM-MARLA"),
+            "an earlier subject was restored as well - only the last one may be"
+        );
+
+        // Same mechanism for a place: "dort" is no different from "er".
+        let places = "User: Erzaehl mir von der Nordwind.\nFontaine: Ein Schiff.";
+        let prompt = ctx.to_prompt_context(Some("Gibt es dort eine Kombuese?"), Some(places));
+        assert!(prompt.contains("GEHEIM-SCHIFF"));
+    }
+
+    /// The fallback must not override an explicit name, otherwise every
+    /// character ever discussed would stay in the prompt forever.
+    #[test]
+    fn naming_someone_beats_the_carried_over_subject() {
+        let ctx = context_with(
+            vec![
+                entity("Jack Smith", "", "GEHEIM-JACK"),
+                entity("Marla", "", "GEHEIM-MARLA"),
+            ],
+            None,
+        );
+        let history = "User: Und Jack?\nFontaine: Jack bleibt.";
+
+        let prompt = ctx.to_prompt_context(Some("Was treibt Marla an?"), Some(history));
+        assert!(prompt.contains("GEHEIM-MARLA"), "the named subject is missing");
+        assert!(
+            !prompt.contains("GEHEIM-JACK"),
+            "the carried-over subject survived although someone was named"
+        );
+    }
+
+    /// Without history nothing may be invented, and an empty history must not
+    /// promote an arbitrary entity.
+    #[test]
+    fn no_history_promotes_nobody() {
+        let ctx = context_with(
+            vec![entity("Jack Smith", "", "GEHEIM-JACK")],
+            None,
+        );
+
+        for history in [None, Some(""), Some("   "), Some("Worum ging es nochmal?")] {
+            let prompt = ctx.to_prompt_context(Some("Und was nun?"), history);
+            assert!(
+                !prompt.contains("GEHEIM-JACK"),
+                "promoted an entity from history {history:?}"
+            );
+        }
     }
 
     /// Where the name-matching retrieval genuinely fails. Not a wishlist: each
@@ -835,7 +969,8 @@ mod tests {
         );
 
         let missed = [
-            // Pronoun: the name only appeared in an earlier chat turn.
+            // Pronoun with no conversation to fall back on. With history this
+            // resolves, see a_pronoun_falls_back_to_the_last_discussed_entity.
             "Welche Augenfarbe hat er nochmal?",
             // Role instead of name.
             "Wie sieht der Kapitän aus?",
@@ -844,7 +979,7 @@ mod tests {
         ];
 
         for question in missed {
-            let prompt = ctx.to_prompt_context(Some(question));
+            let prompt = ctx.to_prompt_context(Some(question), None);
             assert!(
                 !prompt.contains("Grüne Augen"),
                 "retrieval unexpectedly succeeded for {question:?} - \
@@ -880,7 +1015,7 @@ mod tests {
         );
 
         let hit = |ctx: &FontaineContext, q: &str, needle: &str| {
-            ctx.to_prompt_context(Some(q)).contains(needle)
+            ctx.to_prompt_context(Some(q), None).contains(needle)
         };
 
         // A bare nickname.
@@ -936,7 +1071,7 @@ mod tests {
             "Der Wagen fuhr van der Strasse entlang.", // bare "van"
             "Ein Schmied arbeitete.",  // near-miss on Smith
         ] {
-            let prompt = ctx.to_prompt_context(Some(question));
+            let prompt = ctx.to_prompt_context(Some(question), None);
             for secret in ["GEHEIM-JACK", "GEHEIM-LUKAS", "GEHEIM-VAN"] {
                 assert!(
                     !prompt.contains(secret),
@@ -956,9 +1091,9 @@ mod tests {
         let full = context_with(entities.clone(), Some("Ein langes Kapitel ohne Jack."));
         let narrowed = context_with(entities, Some("Ein Satz."));
 
-        assert!(full.to_prompt_context(question).contains("Grüne Augen"));
+        assert!(full.to_prompt_context(question, None).contains("Grüne Augen"));
         assert!(
-            narrowed.to_prompt_context(question).contains("Grüne Augen"),
+            narrowed.to_prompt_context(question, None).contains("Grüne Augen"),
             "narrowing the scene scope hid an entity the user asked about"
         );
     }
@@ -973,7 +1108,7 @@ mod tests {
             Some("Marla stand am Fenster."),
         );
 
-        let prompt = ctx.to_prompt_context(Some("Was tut Marla?"));
+        let prompt = ctx.to_prompt_context(Some("Was tut Marla?"), None);
         assert!(prompt.contains("Die Protagonistin."));
         // Named, so the model knows she exists - but without the payload.
         assert!(prompt.contains("Zrassha"));
@@ -995,7 +1130,7 @@ mod tests {
             .collect();
 
         let ctx = context_with(entities, Some(&scene));
-        let prompt = ctx.to_prompt_context(Some("Was passiert?"));
+        let prompt = ctx.to_prompt_context(Some("Was passiert?"), None);
 
         let described = prompt.matches("): x").count();
         assert!(
@@ -1024,7 +1159,7 @@ mod tests {
         let scene = "Figur3 ging durch den Regen. ".repeat(200);
 
         let ctx = context_with(entities, Some(&scene));
-        let prompt = ctx.to_prompt_context(Some("Was motiviert Figur7?"));
+        let prompt = ctx.to_prompt_context(Some("Was motiviert Figur7?"), None);
 
         // What the previous implementation would have emitted: every entity
         // described, 400 chars each (1500 for the one named in the query).
@@ -1099,7 +1234,7 @@ mod tests {
             total_chars: 0,
         };
 
-        let prompt = ctx.to_prompt_context(None);
+        let prompt = ctx.to_prompt_context(None, None);
         assert!(prompt.contains(&long_scene), "scene must be passed in full");
         assert!(!prompt.contains("[gekürzt]"));
     }

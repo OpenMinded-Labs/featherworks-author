@@ -106,6 +106,17 @@ interface FontainePanelProps {
   getEditorFocus?: () => EditorFocus | null;
 }
 
+/**
+ * How much conversation is passed along so the backend can resolve a question
+ * that names nobody ("hat er nochmal?").
+ *
+ * Only the tail: reaching further back would revive characters the
+ * conversation moved on from, and the backend restores a single subject at
+ * most. The char cap is the safety net for one very long pasted turn.
+ */
+const RECENT_TURNS_FOR_PRONOUNS = 6;
+const RECENT_TURNS_MAX_CHARS = 2000;
+
 // Format timestamp for chat
 const formatTime = (date: Date): string => {
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -361,6 +372,11 @@ export const FontainePanel: React.FC<FontainePanelProps> = ({
   const { t, i18n } = useTranslation();
   const [mode, setMode] = useState<AiMode>('chat');
   const [messages, setMessages] = useState<Message[]>([]);
+
+  // Read inside buildContext, which is a useCallback: depending on `messages`
+  // directly would rebuild it on every single token during streaming.
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
   const [input, setInput] = useState('');
   const [currentId, setCurrentId] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -1153,6 +1169,16 @@ Give me:
     const scoped = resolveContextScope(sceneContent, focus);
     setActiveScope({ scope: scoped.scope, paragraphIndices: scoped.paragraphIndices });
 
+    // Last turns, so a question naming nobody ("hat er nochmal?") keeps its
+    // subject. Only the tail: older turns would resurrect long-dropped
+    // characters, and the backend only ever restores a single subject anyway.
+    const recentTurns = messagesRef.current
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .slice(-RECENT_TURNS_FOR_PRONOUNS)
+      .map(m => `${m.role}: ${m.content}`)
+      .join('\n')
+      .slice(-RECENT_TURNS_MAX_CHARS) || null;
+
     try {
       // Try to get RAG context from backend (includes entities, relevant scenes)
       const result = await invoke<{ context: string; entityCount: number; relevantSceneCount: number }>('build_fontaine_context', {
@@ -1162,6 +1188,7 @@ Give me:
           // Only override when actually narrowed - otherwise let the backend
           // use its own scene text.
           sceneOverride: scoped.scope === 'scene' ? null : scoped.text,
+          recentTurns,
         }
       });
       console.log(`[Fontaine] RAG context: ${result.entityCount} entities, ${result.relevantSceneCount} relevant scenes, ${result.context.length} chars, scope=${scoped.scope}`);
