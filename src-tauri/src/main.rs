@@ -1207,7 +1207,29 @@ async fn extract_entities_ai(
                 let entity_type = phase.entity_type().unwrap_or("character");
 
                 // Scanne jeden Chunk für diese Kategorie
-                for chunk in &chunks {
+                for (chunk_idx, chunk) in chunks.iter().enumerate() {
+                    // Progress per chunk, not just per phase. A long scene
+                    // splits into dozens of chunks, each costing a model call,
+                    // so a phase can run for minutes - with only four phase
+                    // events the display looks frozen.
+                    let done = (phase_idx * chunks.len() + chunk_idx) as f32;
+                    let total = (total_phases * chunks.len()) as f32;
+                    let _ = app_handle.emit_all(
+                        "world_scan_progress",
+                        json!({
+                            "job_id": job_id_for_task,
+                            "phase": format!(
+                                "{} ({}/{})",
+                                phase.display_name_localized(&lang_ref),
+                                chunk_idx + 1,
+                                chunks.len()
+                            ),
+                            "phase_num": phase_idx + 1,
+                            "total_phases": total_phases,
+                            "progress_percent": (done / total * 100.0) as u32
+                        }),
+                    );
+
                     let prompt = build_discovery_prompt(chunk, *phase, &lang_ref);
                     if prompt.is_empty() {
                         continue;

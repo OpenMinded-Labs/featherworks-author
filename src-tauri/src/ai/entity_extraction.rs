@@ -47,12 +47,24 @@ pub fn split_into_chunks(text: &str) -> Vec<String> {
         return vec![text.to_string()];
     }
 
+    // Slicing a `str` at a byte offset that falls inside a multi-byte
+    // character panics. CHUNK_SIZE and CHUNK_OVERLAP are byte counts, so on
+    // German prose the cut lands inside an umlaut sooner or later - and the
+    // panic killed the whole scan before it logged anything.
+    let floor_boundary = |i: usize| {
+        let mut i = std::cmp::min(i, text.len());
+        while i > 0 && !text.is_char_boundary(i) {
+            i -= 1;
+        }
+        i
+    };
+
     let mut chunks = Vec::new();
     let mut start = 0;
 
     while start < text.len() {
         // Bestimme Ende des Chunks
-        let mut end = std::cmp::min(start + CHUNK_SIZE, text.len());
+        let mut end = floor_boundary(start + CHUNK_SIZE);
 
         // Finde gute Stelle zum Trennen (Absatz, Satz, Wort)
         if end < text.len() {
@@ -74,11 +86,14 @@ pub fn split_into_chunks(text: &str) -> Vec<String> {
         if end >= text.len() {
             break;
         }
-        start = if end > CHUNK_OVERLAP {
-            end - CHUNK_OVERLAP
+        let next = if end > CHUNK_OVERLAP {
+            floor_boundary(end - CHUNK_OVERLAP)
         } else {
             end
         };
+        // Never go backwards past the current start, otherwise the same chunk
+        // is produced forever.
+        start = if next > start { next } else { end };
     }
 
     log::info!(
@@ -2309,5 +2324,40 @@ mod tests {
             vec!["Friedhof"],
             "only locations may be inferred; kept: {names:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod chunk_tests {
+    use super::*;
+
+    /// Splitting slices the text by byte offsets. CHUNK_SIZE is a byte count,
+    /// so on German prose the cut regularly lands inside a multi-byte
+    /// character - and slicing a `str` there panics rather than erring.
+    ///
+    /// The panic happens before the function's own log line, and in
+    /// `extract_entities_ai` before the worker is spawned, so the scan dies
+    /// silently: no entities, no progress, nothing in the log.
+    #[test]
+    fn a_cut_landing_inside_an_umlaut_does_not_panic() {
+        // Arrange for byte 3000 to fall inside a two-byte 'ä'.
+        let mut text = "a".repeat(CHUNK_SIZE - 1);
+        text.push('\u{e4}'); // bytes 2999..3001
+        text.push_str(&"b".repeat(500));
+
+        assert!(!text.is_char_boundary(CHUNK_SIZE), "test setup is wrong");
+
+        let chunks = split_into_chunks(&text);
+        assert!(chunks.len() >= 2, "expected a split, got {}", chunks.len());
+        assert_eq!(chunks.concat().matches('\u{e4}').count(), 1);
+    }
+
+    /// The same text must survive the split whole, whatever the cut points.
+    #[test]
+    fn german_prose_survives_chunking() {
+        let sentence = "Sie lief \u{fc}ber den H\u{fc}gel, vorbei an gr\u{fc}nen B\u{e4}umen und sch\u{f6}nen H\u{e4}usern. ";
+        let text = sentence.repeat(300); // well past a single chunk
+        let chunks = split_into_chunks(&text);
+        assert!(chunks.len() > 1, "expected several chunks");
     }
 }
