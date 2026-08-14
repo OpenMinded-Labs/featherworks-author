@@ -92,6 +92,19 @@ Details, Messwerte und verifizierte Fallstricke: **`docs/LLM-STATUS.md`**
 ### AI/Fontaine
 - [x] RAG mit Embeddings (fastembed/onnx)
 - [ ] Bessere Prompt-Templates
+- [ ] **Einmalige Warnung bei überlanger Szene vor dem Entity-Scan**
+  - Sinngemäß "Das übersteigt die übliche Länge und kann zu Latenzen führen",
+    danach ist es die Entscheidung des Users — warnen, nicht bevormunden
+  - Genau einmal zeigen, nicht bei jedem Scan
+  - Schwelle **messen**, nicht schätzen: die Dauer pro Chunk im laufenden
+    Betrieb erheben und daraus ableiten. (Eine frühere Hochrechnung von
+    ~7 s/Aufruf war aus einem Fontaine-Roundtrip mit vollem Szenenkontext
+    übertragen und damit deutlich zu hoch — Discovery-Prompts sind kurz und
+    profitieren vom Prefix-Cache des laufenden Servers.)
+  - Ort: besser beim Erreichen der Länge im Editor als beim Scan-Start, dann
+    kann der User noch umdisponieren
+  - Kontext: 13k Wörter in einer Szene sind ~38 Chunks × 4 Phasen; eine echte
+    Szene liegt weit darunter, das ist also ein Randfall, kein Normalbetrieb
 - [x] Model-Download in-App (Phi-3, Mistral von HuggingFace)
 - [x] Mehr Provider (Mistral, Ollama)
 - [x] **KI-Funktionen ausblenden wenn keine AI geladen/aktiviert**
