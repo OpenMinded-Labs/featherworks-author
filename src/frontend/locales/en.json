@@ -582,6 +582,8 @@
   
   "editor.loading": "Loading editor settings...",
   "editor.placeholder": "Start writing...",
+  "editor.ctrlKey": "Ctrl",
+  "editor.paragraphMarkHint": "{{shortcut}}+click marks a paragraph as context for Fontaine",
   
   "project.new": "New Project",
   "project.open": "Open Project",

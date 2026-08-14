@@ -106,6 +106,23 @@
   border-top: 1px solid var(--glass-border-subtle);
 }
 
+/* Hint about the paragraph-mark gesture, shown only while Fontaine is open.
+   Pushed to the right and muted: it is a reminder, not a status value.
+   The bar needs an explicit flex context - `margin-left: auto` does nothing
+   to an inline span in the default block layout. */
+.editor-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-hint {
+  margin-left: auto;
+  opacity: 0.6;
+  font-size: 0.85em;
+  white-space: nowrap;
+}
+
 /* === Tooltips === */
 .synonym-tooltip, .spellcheck-tooltip, .proofreading-tooltip {
   background: var(--glass-bg-strong);

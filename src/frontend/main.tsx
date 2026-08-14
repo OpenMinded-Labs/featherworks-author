@@ -1884,6 +1884,7 @@ function App() {
                             wordCount={editorWordCount}
                             settings={editorSettings as any}
                             isDirty={isDirty}
+                            fontaineOpen={activeTool === 'fontaine'}
                             onContentChange={handleEditorChange}
                             findQuery={searchQuery || undefined}
                             regex={searchRegex}

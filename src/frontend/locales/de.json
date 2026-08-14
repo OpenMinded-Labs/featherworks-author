@@ -578,6 +578,8 @@
   
   "editor.loading": "Editor-Einstellungen werden geladen...",
   "editor.placeholder": "Beginne zu schreiben...",
+  "editor.ctrlKey": "Strg",
+  "editor.paragraphMarkHint": "{{shortcut}}+Klick markiert einen Absatz als Kontext für Fontaine",
   
   "project.new": "Neues Projekt",
   "project.open": "Projekt öffnen",

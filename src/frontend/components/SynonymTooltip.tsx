@@ -8,6 +8,12 @@ export interface WordInfo {
   to: number;
   x: number;
   y: number;
+  /**
+   * Language of the manuscript, not of the interface. Those are separate
+   * settings (`editor_language`), so someone writing English with a German UI
+   * would otherwise get German synonyms offered for English words.
+   */
+  lang?: 'de' | 'en';
 }
 
 interface Props {
@@ -23,9 +29,10 @@ interface Props {
  * Verwendet OpenThesaurus (DE) und MyThes (EN) für umfangreiche Synonyme.
  */
 export const SynonymTooltip: React.FC<Props> = ({ wordInfo, onReplace, onDismiss }) => {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const tooltipRef = useRef<HTMLDivElement>(null);
-  const lang = i18n.language === 'de' ? 'de' : 'en';
+  // The manuscript's language, not the interface's - see WordInfo.lang.
+  const lang = wordInfo?.lang ?? 'de';
   const [synonyms, setSynonyms] = useState<string[]>([]);
   
   // Synonyme laden wenn sich das Wort ändert

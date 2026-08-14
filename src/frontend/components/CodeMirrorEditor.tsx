@@ -138,17 +138,37 @@ function readParagraphMarks(state: EditorState): Array<{ from: number; to: numbe
 }
 
 /**
- * A click toggles the paragraph under the pointer.
+ * Whether a mouse event is the "mark this paragraph" gesture.
  *
- * The event is deliberately *not* consumed: CodeMirror still places the caret,
- * so clicking to write behaves exactly as before. Marking is a side effect the
- * user can undo by clicking the same paragraph again.
+ * Split out from the handler so the condition can be checked directly. Which
+ * clicks mark and which do not is the whole point of this feature, and it was
+ * wrong once already: a plain click used to mark, which fired on every click
+ * into the text while writing.
+ */
+export function isParagraphMarkGesture(
+  event: Pick<MouseEvent, 'button' | 'altKey' | 'metaKey' | 'ctrlKey'>,
+): boolean {
+  // Alt alone is a text-selection modifier in CodeMirror (block select), so
+  // the platform's command key has to be part of the combination.
+  const withCommandKey = event.metaKey || event.ctrlKey;
+  return event.button === 0 && event.altKey && withCommandKey;
+}
+
+/**
+ * Cmd+Alt+click (Ctrl+Alt on Windows/Linux) toggles the paragraph under the
+ * pointer.
+ *
+ * A plain click cannot be used for this. It is the ordinary way to place the
+ * caret while writing, and it already drives the synonym lookup, which runs on
+ * every cursor move. Marking on a plain click meant every click into the text
+ * silently changed what Fontaine reads, and it collided with the tooltip.
+ *
+ * The event is deliberately *not* consumed, so CodeMirror still places the
+ * caret. Marking is reversible by repeating the same combination.
  */
 const paragraphMarkClick = EditorView.domEventHandlers({
   mousedown(event, view) {
-    // Only a plain primary click. Shift-click extends a selection, and the
-    // context menu should never change what Fontaine reads.
-    if (event.button !== 0 || event.shiftKey) return false;
+    if (!isParagraphMarkGesture(event)) return false;
 
     const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
     if (pos == null) return false;
@@ -540,7 +560,11 @@ export const CodeMirrorEditor:React.FC<Props> = ({ value, onChange, command$, fi
   async function checkSynonyms(view: EditorView) {
     if (!onSynonymRequest) return;
     const wordInfo = getWordAtCursor(view);
-    const lang = i18n.language === 'de' ? 'de' : 'en';
+    // The manuscript's language, not the interface's. `editor_language` is a
+    // separate setting, and spellcheck already follows it - synonyms used to
+    // follow the UI instead, so an English manuscript in a German UI was
+    // looked up in the German thesaurus.
+    const lang = currentEditorLanguage;
     if (!wordInfo) {
       onSynonymRequest(null);
       return;
@@ -563,7 +587,8 @@ export const CodeMirrorEditor:React.FC<Props> = ({ value, onChange, command$, fi
         from: wordInfo.from,
         to: wordInfo.to,
         x: coords.left,
-        y: coords.bottom + 4
+        y: coords.bottom + 4,
+        lang
       });
     } catch {
       onSynonymRequest(null);

@@ -221,8 +221,13 @@ export function findWordRepetitions(
 ): WordRepetition[] {
   const repetitions: WordRepetition[] = [];
   
-  // Extract words with positions
-  const wordRegex = /\b([a-zA-ZäöüÄÖÜß]{4,})\b/gi;
+  // Extract words with positions.
+  //
+  // The bound has to come from the setting. It used to be hardcoded to {4,},
+  // while the settings panel offers 2 upwards, so choosing 2 or 3 silently
+  // did nothing - a three-letter word repeated twice was never reported.
+  const bound = Math.max(1, Math.floor(minWordLength));
+  const wordRegex = new RegExp(`\\b([a-zA-Z\u00e4\u00f6\u00fc\u00c4\u00d6\u00dc\u00df]{${bound},})\\b`, 'gi');
   const words: { word: string; pos: number; index: number }[] = [];
   
   let match;

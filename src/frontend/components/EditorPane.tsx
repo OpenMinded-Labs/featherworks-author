@@ -19,11 +19,29 @@ import { EntityTooltip, EntityTooltipInfo } from './EntityTooltip';
 import { EditorContextMenu, SelectionInfo } from './EditorContextMenu';
 import { CreateEntityDialog } from './CreateEntityDialog';
 
+/**
+ * How the paragraph-mark gesture is written for the current platform.
+ *
+ * Spelling it out matters: the gesture is not discoverable anywhere else, and
+ * the modifiers differ between macOS and the rest. The non-Mac name is
+ * translated, because the control key is labelled "Strg" on German keyboards.
+ */
+function paragraphMarkShortcut(t: (k: string) => string): string {
+  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || '');
+  return isMac ? '\u2318\u2325' : `${t('editor.ctrlKey')}+Alt`;
+}
+
 export const EditorPane: React.FC<{
   content: string;
   wordCount: number;
   settings: EditorSettingsLocal | null;
   isDirty: boolean;
+  /**
+   * Whether the Fontaine panel is open. Only then is the hint about marking
+   * paragraphs worth showing - marked paragraphs exist to scope what Fontaine
+   * reads, so with the panel closed the hint would just be noise.
+   */
+  fontaineOpen?: boolean;
   onContentChange: (newContent: string) => void;
   findQuery: string | undefined;
   regex: boolean;
@@ -40,7 +58,7 @@ export const EditorPane: React.FC<{
   onResearch?: (text: string) => void;
   onFontaineAnalyze?: (text: string, from: number, to: number) => void;
   onOpenEntityTypeManager?: () => void;
-}> = ({ content, wordCount, settings, isDirty, onContentChange, findQuery, regex, onSearchApiReady, onCommandApiReady, onScroll, lektoratHighlight, commentApi$, onOpenThesaurus, onResearch, onFontaineAnalyze, onOpenEntityTypeManager }) => {
+}> = ({ content, wordCount, settings, isDirty, fontaineOpen = false, onContentChange, findQuery, regex, onSearchApiReady, onCommandApiReady, onScroll, lektoratHighlight, commentApi$, onOpenThesaurus, onResearch, onFontaineAnalyze, onOpenEntityTypeManager }) => {
   const { t } = useTranslation();
   const [synonymWordInfo, setSynonymWordInfo] = useState<WordInfo | null>(null);
   const [spellErrorInfo, setSpellErrorInfo] = useState<SpellErrorInfo | null>(null);
@@ -230,6 +248,11 @@ export const EditorPane: React.FC<{
       <div className="editor-statusbar">
         <span>{t('status.words')}: {wordCount}</span>
         {isDirty && <span className="dirty-indicator"> ({t('status.saving')})</span>}
+        {fontaineOpen && (
+          <span className="editor-hint">
+            {t('editor.paragraphMarkHint', { shortcut: paragraphMarkShortcut(t) })}
+          </span>
+        )}
       </div>
     </div>
   );
