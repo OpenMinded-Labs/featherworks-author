@@ -471,3 +471,66 @@ fn measure_what_the_detail_pass_does_to_types() {
 
     server::stop();
 }
+
+/// The entity scan makes dozens of sequential model calls from inside a
+/// `tokio::spawn`ed task. With a client built per call, the app was observed
+/// stopping mid-scan: no socket open, both processes idle, and the 600 s
+/// timeout never firing, while the server answered a manual request in 0.49 s.
+///
+/// This drives the same shape - many calls in a row from a tokio context - to
+/// see whether the run completes and how the per-call cost develops.
+#[test]
+#[ignore = "requires model + venv"]
+fn measure_many_sequential_calls_from_a_tokio_context() {
+    use featherworks_author::ai::server;
+
+    let model = model_dir();
+    assert!(model.exists(), "model missing at {}", model.display());
+    server::start(&python(), &model).expect("server failed to start");
+
+    // A scan runs inside the tauri async runtime, which is what makes the
+    // blocking client's own runtime nest inside another one.
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        tokio::task::spawn(async {
+            const CALLS: usize = 40;
+            let overall = Instant::now();
+            let mut slowest = 0.0_f64;
+
+            for i in 0..CALLS {
+                let t = Instant::now();
+                let messages = vec![(
+                    "user",
+                    "Nenne den Ort in diesem Satz, nur ein Wort: \
+                     Sie lief zwischen den Grabsteinen hindurch.",
+                )];
+                let result = server::chat(&messages, 32, 0.2, false);
+                let secs = t.elapsed().as_secs_f64();
+                slowest = f64::max(slowest, secs);
+
+                match result {
+                    Ok(c) => {
+                        if i % 10 == 0 || secs > 20.0 {
+                            println!(
+                                "call {i:>3}: {secs:>5.2}s  cached={:>5}  {}",
+                                c.cached_tokens,
+                                c.content.replace('\n', " ").chars().take(40).collect::<String>()
+                            );
+                        }
+                    }
+                    Err(e) => panic!("call {i} failed after {secs:.1}s: {e}"),
+                }
+            }
+
+            println!(
+                "\n{CALLS} calls in {:.1}s, slowest {:.2}s",
+                overall.elapsed().as_secs_f64(),
+                slowest
+            );
+        })
+        .await
+        .expect("task panicked or hung");
+    });
+
+    server::stop();
+}

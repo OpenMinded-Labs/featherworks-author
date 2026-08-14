@@ -73,6 +73,31 @@ impl Drop for ServerHandle {
 
 static SERVER: OnceLock<Mutex<Option<ServerHandle>>> = OnceLock::new();
 
+/// One blocking HTTP client for the whole process.
+///
+/// Must not be called from inside an async context - see `chat`, which is why
+/// every request runs on its own thread.
+///
+/// Reusing one client also keeps the connection pool, which building one per
+/// call threw away.
+fn http_client() -> Result<&'static reqwest::blocking::Client> {
+    static CLIENT: OnceLock<std::result::Result<reqwest::blocking::Client, String>> =
+        OnceLock::new();
+
+    CLIENT
+        .get_or_init(|| {
+            reqwest::blocking::Client::builder()
+                .timeout(REQUEST_TIMEOUT)
+                // Without an idle timeout a pooled connection can be reused
+                // after the server has dropped its end.
+                .pool_idle_timeout(Duration::from_secs(30))
+                .build()
+                .map_err(|e| e.to_string())
+        })
+        .as_ref()
+        .map_err(|e| anyhow!("failed to build http client: {e}"))
+}
+
 fn slot() -> &'static Mutex<Option<ServerHandle>> {
     SERVER.get_or_init(|| Mutex::new(None))
 }
@@ -235,6 +260,13 @@ fn drain_output(child: &mut Child) {
 fn wait_until_ready(port: u16) -> Result<()> {
     let deadline = Instant::now() + STARTUP_TIMEOUT;
     let url = format!("http://127.0.0.1:{port}/v1/models");
+    // Deliberately not the shared client: a health probe must give up after
+    // seconds, not after REQUEST_TIMEOUT.
+    //
+    // Like every `reqwest::blocking` call this must not run inside a tokio
+    // context (see `chat`). It is safe because the only caller, `start`, is
+    // already spawned on a plain `std::thread` in `ai::mod`. If `start` is
+    // ever called directly from a command, this blocks the async worker.
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()?;
@@ -368,16 +400,30 @@ pub fn chat(
     };
 
     let body = build_chat_body(model_id, messages, max_tokens, temperature, thinking, false);
+    let url = format!("http://127.0.0.1:{port}/v1/chat/completions");
 
-    let client = reqwest::blocking::Client::builder()
-        .timeout(REQUEST_TIMEOUT)
-        .build()?;
-
-    let response: serde_json::Value = client
-        .post(format!("http://127.0.0.1:{port}/v1/chat/completions"))
-        .json(&body)
-        .send()?
-        .json()?;
+    // The request runs on a plain thread, never on the caller's.
+    //
+    // `reqwest::blocking` may not be used from inside a tokio context: both
+    // `Client::build` and `RequestBuilder::send` create a runtime and drop it
+    // again (`reqwest::blocking::wait::enter`), and dropping a runtime inside
+    // an async context is illegal. Debug builds panic with "Cannot drop a
+    // runtime in a context where blocking is not allowed" - verified from a
+    // backtrace and reproduced by
+    // `measure_many_sequential_calls_from_a_tokio_context`.
+    //
+    // Release builds have no such check, so instead the call blocks the async
+    // worker it was running on. The entity scan issues dozens of these from a
+    // `tokio::spawn`ed task, and the app was seen stopping mid-scan with no
+    // socket open, both processes idle and the 600 s timeout never firing,
+    // while the server answered a manual request in 0.49 s.
+    //
+    // Spawning a thread costs microseconds against a model call of seconds.
+    let response: serde_json::Value = std::thread::spawn(move || -> Result<serde_json::Value> {
+        Ok(http_client()?.post(url).json(&body).send()?.json()?)
+    })
+    .join()
+    .map_err(|_| anyhow!("request thread panicked"))??;
 
     if let Some(err) = response.get("error") {
         return Err(anyhow!("mlx server error: {}", err));
